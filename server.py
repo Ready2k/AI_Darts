@@ -11,6 +11,8 @@ import check_cameras
 import align
 import detect
 import history
+import leaderboard
+import ai
 
 
 def current_state():
@@ -57,25 +59,40 @@ async def _watch_game():
     """
     # Seed with the current state so we don't re-broadcast what `register`
     # already sends to a freshly connected client.
-    last = json.dumps(current_state())
+    last_state = current_state()
+    last = json.dumps(last_state)
+    game_was_over = last_state.get("over", False)
     while True:
         try:
-            msg = json.dumps(current_state())
+            state = current_state()
+            msg = json.dumps(state)
             if msg != last:
                 last = msg
                 await hub.broadcast(msg)
-        except Exception:
-            pass
+                
+            # Handle saving match history if game just ended
+            over_now = state.get("over", False)
+            if over_now and not game_was_over:
+                if detect.GAME:
+                    print("Game is over, saving match history...")
+                    history.save_match(detect.GAME)
+            game_was_over = over_now
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
         await asyncio.sleep(0.1)
 
 
 @asynccontextmanager
 async def lifespan(app):
     watcher = asyncio.create_task(_watch_game())
+    ai_task = asyncio.create_task(ai.ai_loop())
     try:
         yield
     finally:
         watcher.cancel()
+        ai_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -137,8 +154,18 @@ def get_game():
 async def new_game(request: Request):
     """Start a new game. Body: players[], start_score, double_in, double_out, legs_to_win, sets_to_win."""
     cfg = await request.json()
-    players = cfg.get("players")
-    players = [p.strip() for p in players if p and p.strip()] if players else None
+    players_raw = cfg.get("players")
+    players = []
+    if players_raw:
+        for p in players_raw:
+            if isinstance(p, dict) and p.get("name") and p["name"].strip():
+                p["name"] = p["name"].strip()
+                players.append(p)
+            elif isinstance(p, str) and p.strip():
+                players.append(p.strip())
+    
+    if not players:
+        players = None
     detect.new_game(
         players=players,
         start_score=cfg.get("start_score"),
@@ -172,6 +199,11 @@ def get_history():
     """Recently completed matches, most recent first."""
     return list(reversed(history.load_history(limit=20)))
 
+
+@app.get("/api/leaderboard")
+def get_leaderboard():
+    """Returns the current leaderboard statistics."""
+    return leaderboard.get_leaderboard()
 
 @app.post("/api/game/correct")
 async def correct_game(request: Request):

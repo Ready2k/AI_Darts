@@ -1,0 +1,41 @@
+[
+  {
+    "ts": "2026-06-12 22:43",
+    "start_score": 2,
+    "double_in": false,
+    "double_out": true,
+    "winner": "AI Pro",
+    "players": [
+      {
+        "name": "AI Pro",
+        "sets": 1,
+        "legs": 0,
+        "avg": 6.0,
+        "darts": 1
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-12 22:46",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": true,
+    "winner": "AI AL",
+    "players": [
+      {
+        "name": "AI AL",
+        "sets": 1,
+        "legs": 0,
+        "avg": 82.1,
+        "darts": 11
+      },
+      {
+        "name": "Dave",
+        "sets": 0,
+        "legs": 0,
+        "avg": 68.7,
+        "darts": 9
+      }
+    ]
+  }
+]

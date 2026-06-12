@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Settings, LineChart, Target, Camera, Crosshair,
-  Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star
+  Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star,
+  Maximize2, Minimize2, Menu, ChevronLeft
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell
@@ -103,7 +104,7 @@ function Scoreboard({ game, avatarMap }) {
 
 // ── Game setup form ─────────────────────────────────────────────────────────
 function GameSetup({ onStarted }) {
-  const [players, setPlayers] = useState([{ name: 'Player 1', avatar: 'pubguy' }])
+  const [players, setPlayers] = useState([{ name: 'Player 1', avatar: 'pubguy', is_ai: false, ai_level: 'Beginner' }])
   const [gameMode, setGameMode] = useState('501')
   const [startScore, setStartScore] = useState(501)
   const [doubleOut, setDoubleOut] = useState(true)
@@ -112,17 +113,23 @@ function GameSetup({ onStarted }) {
 
   const setPlayerName = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, name: v } : p)))
   const setPlayerAvatar = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, avatar: v } : p)))
-  const addPlayer = () => players.length < 6 && setPlayers([...players, { name: `Player ${players.length + 1}`, avatar: 'pubguy' }])
+  const setPlayerType = (i, is_ai) => setPlayers(players.map((p, j) => (j === i ? { ...p, is_ai } : p)))
+  const setPlayerLevel = (i, ai_level) => setPlayers(players.map((p, j) => (j === i ? { ...p, ai_level } : p)))
+  const addPlayer = () => players.length < 6 && setPlayers([...players, { name: `Player ${players.length + 1}`, avatar: 'pubguy', is_ai: false, ai_level: 'Beginner' }])
   const removePlayer = (i) => players.length > 1 && setPlayers(players.filter((_, j) => j !== i))
 
   const start = async () => {
     setBusy(true)
     try {
-      const names = players.map(p => p.name)
+      const playerConfigs = players.map(p => ({
+        name: p.name,
+        is_ai: p.is_ai || false,
+        ai_level: p.ai_level || 'Beginner'
+      }))
       await fetch(`${API_URL}/game/new`, {
         method: 'POST', headers: JSON_HEADERS,
         body: JSON.stringify({
-          players: names, start_score: startScore, double_in: false,
+          players: playerConfigs, start_score: startScore, double_in: false,
           double_out: doubleOut, legs_to_win: legs, sets_to_win: 1,
         }),
       })
@@ -190,16 +197,40 @@ function GameSetup({ onStarted }) {
         <label className="text-xs uppercase tracking-widest text-white/40">Players</label>
         <div className="space-y-4 mt-2">
           {players.map((p, i) => (
-            <div key={i} className="flex gap-4 items-center bg-white/5 p-3 rounded-xl border border-white/5">
-              <AvatarPicker selectedId={p.avatar} onChange={(id) => setPlayerAvatar(i, id)} />
-              <div className="flex-1 flex gap-2">
-                <input value={p.name} onChange={(e) => setPlayerName(i, e.target.value)}
-                  className="flex-1 px-4 py-2.5 rounded-lg bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm" />
-                {players.length > 1 && (
-                  <button onClick={() => removePlayer(i)}
-                    className="px-3 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/50 hover:text-red-300">
-                    <X className="w-4 h-4" />
-                  </button>
+            <div key={i} className="flex flex-col gap-2 bg-white/5 p-3 rounded-xl border border-white/5">
+              <div className="flex gap-4 items-center">
+                <AvatarPicker selectedId={p.avatar} onChange={(id) => setPlayerAvatar(i, id)} />
+                <div className="flex-1 flex gap-2">
+                  <input value={p.name} onChange={(e) => setPlayerName(i, e.target.value)}
+                    className="flex-1 px-4 py-2.5 rounded-lg bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm" />
+                  {players.length > 1 && (
+                    <button onClick={() => removePlayer(i)}
+                      className="px-3 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/50 hover:text-red-300">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end items-center mt-1">
+                <span className="text-xs text-white/40 uppercase">Type:</span>
+                <select 
+                  value={p.is_ai ? 'AI' : 'Human'} 
+                  onChange={(e) => setPlayerType(i, e.target.value === 'AI')}
+                  className="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-cyan-400/50"
+                >
+                  <option value="Human">Human</option>
+                  <option value="AI">AI Player</option>
+                </select>
+                {p.is_ai && (
+                  <select 
+                    value={p.ai_level || 'Beginner'} 
+                    onChange={(e) => setPlayerLevel(i, e.target.value)}
+                    className="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-cyan-400/50 text-cyan-300"
+                  >
+                    <option value="Beginner">Beginner</option>
+                    <option value="Semi Pro">Semi Pro</option>
+                    <option value="Pro">Pro</option>
+                  </select>
                 )}
               </div>
             </div>
@@ -339,22 +370,64 @@ function Placeholder({ icon: Icon, title, text }) {
   )
 }
 
-function StreamPanel({ script, label, hint, extraButtons }) {
+function StreamPanel({ script, label, hint, extraButtons, allowPopout }) {
   const [on, setOn] = useState(false)
-  return (
+  const [popout, setPopout] = useState(false)
+  
+  const content = (
     <div className="w-full h-full flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <button onClick={() => setOn(!on)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${on ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
           {on ? <><Square className="w-3 h-3" /> Stop</> : <><Play className="w-3 h-3" /> Start {label}</>}
         </button>
         {on && extraButtons}
-        <span className="text-xs text-white/40">{hint}</span>
+        {allowPopout && on && (
+          <button onClick={() => setPopout(true)} className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 text-xs font-bold transition-colors ml-auto">
+            <Maximize2 className="w-4 h-4" />
+          </button>
+        )}
+        {!allowPopout && <span className="text-xs text-white/40">{hint}</span>}
       </div>
-      <div className="flex-1 min-h-0">
-        {on ? <StreamViewer scriptName={script} /> : <div className="w-full h-full flex items-center justify-center rounded-xl bg-black/30 border border-white/10"><Placeholder icon={Camera} title={`${label} idle`} text="Press Start to open the camera stream." /></div>}
+      <div className="flex-1 min-h-0 relative" onClick={() => { if (allowPopout && on) setPopout(true) }}>
+        {on ? (
+          <div className={allowPopout ? "w-full h-full cursor-pointer hover:ring-2 hover:ring-cyan-400/50 rounded-xl transition-all" : "w-full h-full"}>
+            <StreamViewer scriptName={script} />
+          </div>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center rounded-xl bg-black/30 border border-white/10 p-4">
+            <Placeholder icon={Camera} title={`${label} idle`} text="Press Start to open the camera stream." />
+          </div>
+        )}
       </div>
     </div>
   )
+
+  if (popout) {
+    return (
+      <>
+        {content}
+        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 sm:p-8 backdrop-blur-md"
+             onClick={() => setPopout(false)}>
+          <div className="w-full max-w-7xl h-full flex flex-col gap-4 relative" onClick={e => e.stopPropagation()}>
+             <div className="flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <Camera className="w-6 h-6 text-cyan-400" />
+                  <h3 className="text-xl tracking-wide font-light uppercase">{label} Stream</h3>
+                </div>
+                <button onClick={() => setPopout(false)} className="p-3 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center gap-2">
+                  <Minimize2 className="w-5 h-5" /> <span className="text-sm font-medium pr-1">Close</span>
+                </button>
+             </div>
+             <div className="flex-1 min-h-0 rounded-xl overflow-hidden border border-white/20 bg-black shadow-2xl relative flex items-center justify-center">
+                <StreamViewer scriptName={script} />
+             </div>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  return content
 }
 
 function AlignButtons() {
@@ -369,9 +442,25 @@ function AlignButtons() {
   )
 }
 
-function CorrectionBoard({ game, onRefresh }) {
+function CorrectionBoard({ game, onRefresh, isLarge, ocheCam }) {
   const [armed, setArmed] = useState(false)
-  if (!hasGame(game)) return null
+  if (!hasGame(game)) {
+    return (
+      <div className={`rounded-xl bg-black/30 border border-white/10 p-4 space-y-3 relative ${isLarge ? 'h-full flex flex-col' : ''}`}>
+         {isLarge && ocheCam && (
+           <div className="absolute top-4 left-4 z-20">
+             {ocheCam}
+           </div>
+         )}
+         <div className="flex items-center justify-end shrink-0 min-h-[32px]">
+           {!isLarge && <span className="text-xs uppercase tracking-widest text-white/40 mr-auto">Board</span>}
+         </div>
+         <div className={isLarge ? 'flex-1 min-h-0 flex items-center justify-center relative' : 'relative'}>
+           <DartBoard darts={[]} />
+         </div>
+      </div>
+    )
+  }
 
   const pick = async (x_mm, y_mm) => {
     await fetch(`${API_URL}/game/correct`, {
@@ -383,17 +472,24 @@ function CorrectionBoard({ game, onRefresh }) {
   const hasDart = game.turn && game.turn.some((d) => d.pos)
 
   return (
-    <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-widest text-white/40">Board</span>
+    <div className={`rounded-xl bg-black/30 border border-white/10 p-4 space-y-3 relative ${isLarge ? 'h-full flex flex-col' : ''}`}>
+      {isLarge && ocheCam && (
+        <div className="absolute top-4 left-4 z-20">
+          {ocheCam}
+        </div>
+      )}
+      <div className="flex items-center justify-end shrink-0 min-h-[32px]">
+        {!isLarge && <span className="text-xs uppercase tracking-widest text-white/40 mr-auto">Board</span>}
         <button onClick={() => setArmed(!armed)} disabled={!hasDart}
-          className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors relative z-20 ${
             armed ? 'bg-cyan-500/25 border-cyan-400/50 text-cyan-200'
                   : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'} disabled:opacity-40`}>
           {armed ? 'Cancel' : 'Correct last dart'}
         </button>
       </div>
-      <DartBoard darts={game.turn} armed={armed} onPick={pick} />
+      <div className={isLarge ? 'flex-1 min-h-0 flex items-center justify-center relative' : 'relative'}>
+        <DartBoard darts={game.turn} armed={armed} onPick={pick} />
+      </div>
     </div>
   )
 }
@@ -482,8 +578,65 @@ const TABS = [
   { name: 'Align', icon: Crosshair },
   { name: 'Cameras', icon: Camera },
   { name: 'Stats', icon: LineChart },
+  { name: 'Leaderboard', icon: Trophy },
   { name: 'Settings', icon: Settings },
 ]
+
+function Leaderboard() {
+  const [data, setData] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API_URL}/leaderboard`)
+      .then(res => res.json())
+      .then(d => {
+        setData(d)
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [])
+
+  return (
+    <div className="w-full max-w-4xl mx-auto space-y-6">
+      {loading ? (
+        <div className="text-white/40 text-center py-8 flex justify-center items-center gap-2">
+           <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" /> Loading...
+        </div>
+      ) : data.length === 0 ? (
+        <Placeholder icon={Trophy} title="No Data" text="Play some games to see the leaderboard." />
+      ) : (
+        <div className="rounded-xl bg-black/30 border border-white/10 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="text-white/40 uppercase tracking-wider text-[11px]">
+              <tr className="border-b border-white/10 bg-black/40">
+                <th className="text-center px-4 py-4 w-16">Rank</th>
+                <th className="text-left px-5 py-4">Player</th>
+                <th className="text-right px-5 py-4">Played</th>
+                <th className="text-right px-5 py-4">Won</th>
+                <th className="text-right px-5 py-4">Lost</th>
+                <th className="text-right px-5 py-4">Win %</th>
+                <th className="text-right px-5 py-4">Avg</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((p, i) => (
+                <tr key={i} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+                  <td className="px-4 py-4 text-center font-bold text-white/50">{p.rank}</td>
+                  <td className="px-5 py-4 font-medium text-cyan-300">{p.name}</td>
+                  <td className="px-5 py-4 text-right tabular-nums text-white/60">{p.played}</td>
+                  <td className="px-5 py-4 text-right tabular-nums text-emerald-400">{p.won}</td>
+                  <td className="px-5 py-4 text-right tabular-nums text-red-400/80">{p.lost}</td>
+                  <td className="px-5 py-4 text-right tabular-nums">{p.win_rate.toFixed(1)}%</td>
+                  <td className="px-5 py-4 text-right tabular-nums font-bold text-fuchsia-300">{p.avg.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── App shell ───────────────────────────────────────────────────────────────
 function App() {
@@ -492,6 +645,7 @@ function App() {
   const [avatarMap, setAvatarMap] = useState({})
   const [showDemo, setShowDemo] = useState(false)
   const [demoScript, setDemoScript] = useState(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const { animState, triggerThrow } = useThrowAnimation()
 
@@ -547,40 +701,56 @@ function App() {
       </div>
 
       {/* Sidebar */}
-      <aside className="w-64 flex flex-col z-10 glass-panel border-r border-white/5 m-4 rounded-2xl shadow-2xl">
-        <div className="p-6 pb-2">
-          <h1 className="text-2xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-fuchsia-500 mb-1">
-            DARTS.AI
-          </h1>
-          <p className="text-xs text-white/50 tracking-widest uppercase">Pro Vision System</p>
+      <aside className={`flex flex-col z-10 glass-panel border-r border-white/5 m-4 rounded-2xl shadow-2xl transition-all duration-300 ${sidebarCollapsed ? 'w-20 items-center' : 'w-64'}`}>
+        <div className={`p-6 pb-2 flex items-center ${sidebarCollapsed ? 'justify-center p-4' : 'justify-between'}`}>
+          {!sidebarCollapsed && (
+            <div className="overflow-hidden">
+              <h1 className="text-2xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-fuchsia-500 mb-1 whitespace-nowrap">
+                DARTS.AI
+              </h1>
+              <p className="text-xs text-white/50 tracking-widest uppercase whitespace-nowrap">Pro Vision System</p>
+            </div>
+          )}
+          <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="p-2 -mr-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors shrink-0">
+            {sidebarCollapsed ? <Menu className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          </button>
         </div>
-        <nav className="flex-1 px-4 py-6 space-y-2">
+        <nav className={`flex-1 py-6 space-y-2 ${sidebarCollapsed ? 'px-2' : 'px-4'}`}>
           {TABS.map((tab) => {
             const Icon = tab.icon
             const isActive = activeTab === tab.name
             return (
               <button key={tab.name} onClick={() => setActiveTab(tab.name)}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all group ${
+                title={sidebarCollapsed ? tab.name : undefined}
+                className={`w-full flex items-center space-x-3 py-3 rounded-xl transition-all group ${
+                  sidebarCollapsed ? 'justify-center px-0' : 'px-4'
+                } ${
                   isActive ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
                            : 'text-white/60 hover:bg-white/5 hover:text-white'}`}>
-                <Icon className={`w-5 h-5 ${isActive ? 'scale-110 text-cyan-400' : 'group-hover:text-cyan-400'}`} />
-                <span className="font-medium tracking-wide text-sm">{tab.name}</span>
-                {isActive && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'scale-110 text-cyan-400' : 'group-hover:text-cyan-400'}`} />
+                {!sidebarCollapsed && <span className="font-medium tracking-wide text-sm whitespace-nowrap">{tab.name}</span>}
+                {isActive && !sidebarCollapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
               </button>
             )
           })}
         </nav>
-        <div className="p-4 m-4 rounded-xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10">
-          <div className="flex items-center space-x-3 mb-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-semibold text-white/80 uppercase tracking-wider">
-              {hasGame(uiGame) ? (uiGame.over ? 'Game over' : 'Game live') : 'Idle'}
-            </span>
+        {!sidebarCollapsed ? (
+          <div className="p-4 m-4 rounded-xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10 overflow-hidden">
+            <div className="flex items-center space-x-3 mb-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="text-xs font-semibold text-white/80 uppercase tracking-wider whitespace-nowrap">
+                {hasGame(uiGame) ? (uiGame.over ? 'Game over' : 'Game live') : 'Idle'}
+              </span>
+            </div>
+            <p className="text-[10px] text-white/40 whitespace-nowrap">
+              {hasGame(uiGame) ? `${uiGame.start_score} · ${uiGame.double_out ? 'double out' : 'straight out'}` : 'No game running'}
+            </p>
           </div>
-          <p className="text-[10px] text-white/40">
-            {hasGame(uiGame) ? `${uiGame.start_score} · ${uiGame.double_out ? 'double out' : 'straight out'}` : 'No game running'}
-          </p>
-        </div>
+        ) : (
+          <div className="p-4 mb-4 flex justify-center shrink-0">
+             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          </div>
+        )}
       </aside>
 
       {/* Main */}
@@ -617,15 +787,22 @@ function App() {
           {activeTab === 'Live Track' && (
             <div className="h-full grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6">
               <div className="flex flex-col gap-3 min-h-0">
-                <StreamPanel script="detect" label="detection"
-                  hint="Throw darts — scores are read automatically."
-                  extraButtons={<DebugSnapshot />} />
+                <CorrectionBoard 
+                  game={uiGame} 
+                  onRefresh={refresh} 
+                  isLarge 
+                  ocheCam={<OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />}
+                />
               </div>
               <div className="flex flex-col space-y-4 overflow-auto">
                 <Scoreboard game={uiGame} avatarMap={avatarMap} />
-                <OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />
                 {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
-                <CorrectionBoard game={uiGame} onRefresh={refresh} />
+                <div className="flex-1 min-h-[300px]">
+                  <StreamPanel script="detect" label="detection"
+                    hint="Click to popout"
+                    extraButtons={<DebugSnapshot />}
+                    allowPopout />
+                </div>
               </div>
             </div>
           )}
@@ -641,6 +818,7 @@ function App() {
           )}
 
           {activeTab === 'Stats' && <Stats game={uiGame} />}
+          {activeTab === 'Leaderboard' && <Leaderboard />}
 
           {activeTab === 'Settings' && (
             <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); refresh(); setActiveTab('Live Track') }} />

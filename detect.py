@@ -1084,13 +1084,8 @@ def stream_frames(event_queue):
                                   + (f"  ({' '.join(co)})" if co else ""))
                             say(f"{p.name}, {p.score}")
 
-            # Persist a match the first frame it finishes.
-            with GAME_LOCK:
-                over_now = GAME.over if GAME else False
-                if over_now and not game_was_over:
-                    rec = history.save_match(GAME)
-                    print(f"Match saved to history: winner {rec['winner']}")
-            game_was_over = over_now
+            # History saving has been moved to server.py to ensure it saves even if the stream is not actively being viewed.
+            game_was_over = GAME.over if GAME else False
 
             grid = np.hstack(tiles)
             for i, reader in enumerate(readers):

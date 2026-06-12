@@ -16,7 +16,7 @@ from dartboard import Hit, is_double
 
 
 class Player:
-    def __init__(self, name, start_score):
+    def __init__(self, name, start_score, is_ai=False, ai_level=None):
         self.name = name
         self.score = start_score          # remaining in the current leg
         self.legs = 0
@@ -24,6 +24,8 @@ class Player:
         self.opened = False               # has met double-in requirement this leg
         self.total_points = 0             # match totals, for averages
         self.total_darts = 0
+        self.is_ai = is_ai
+        self.ai_level = ai_level
 
     @property
     def three_dart_avg(self):
@@ -40,6 +42,8 @@ class Player:
             "opened": self.opened,
             "avg": round(self.three_dart_avg, 1),
             "darts": self.total_darts,
+            "is_ai": self.is_ai,
+            "ai_level": self.ai_level,
         }
 
 
@@ -55,7 +59,12 @@ class X01Game:
         self.legs_to_win = legs_to_win
         self.sets_to_win = sets_to_win
 
-        self.players = [Player(n, start_score) for n in player_names]
+        self.players = []
+        for p in player_names:
+            if isinstance(p, dict):
+                self.players.append(Player(p["name"], start_score, is_ai=p.get("is_ai", False), ai_level=p.get("ai_level")))
+            else:
+                self.players.append(Player(p, start_score))
         self.current = 0
         self.leg_starter = 0          # who throws first this leg (rotates)
         self.turn = []                # Hits thrown in the current visit
