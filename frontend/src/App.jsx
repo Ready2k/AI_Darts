@@ -289,7 +289,7 @@ function GameControls({ onRefresh, onNewGame }) {
         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/25 border border-fuchsia-400/30 text-fuchsia-200 text-sm font-semibold transition-colors">
         <Target className="w-4 h-4" /> Simulate Treble 20 Throw
       </button>
-      <button onClick={() => { unlockAudio(); window.dispatchEvent(new CustomEvent('start-demo')) }}
+      <button onClick={() => { unlockAudio(); launchDemo() }}
         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/15 hover:bg-orange-500/25 border border-orange-400/30 text-orange-200 text-sm font-semibold transition-colors uppercase tracking-widest">
         <Star className="w-4 h-4" /> Run Cinematic Demo
       </button>
@@ -494,14 +494,19 @@ function App() {
   const [game] = useGame()
   const [avatarMap, setAvatarMap] = useState({})
   const [showDemo, setShowDemo] = useState(false)
+  const [demoScript, setDemoScript] = useState(null)
 
   const { animState, triggerThrow } = useThrowAnimation()
 
-  useEffect(() => {
-    const handleStartDemo = () => setShowDemo(true)
-    window.addEventListener('start-demo', handleStartDemo)
-    return () => window.removeEventListener('start-demo', handleStartDemo)
+  const launchDemo = useCallback(() => {
+    setDemoScript(SCRIPTS[Math.floor(Math.random() * SCRIPTS.length)])
+    setShowDemo(true)
   }, [])
+
+  useEffect(() => {
+    window.addEventListener('start-demo', launchDemo)
+    return () => window.removeEventListener('start-demo', launchDemo)
+  }, [launchDemo])
 
   const leader = hasGame(game) ? [...game.players].sort((a, b) => a.score - b.score)[0] : null
 
@@ -604,7 +609,7 @@ function App() {
                   className="px-5 py-3 rounded-xl bg-white/5 border border-white/10 font-semibold text-sm">Live tracking</button>
                 <button onClick={() => setActiveTab('Align')}
                   className="px-5 py-3 rounded-xl bg-white/5 border border-white/10 font-semibold text-sm">Align cameras</button>
-                <button onClick={() => { unlockAudio(); setShowDemo(true) }}
+                <button onClick={() => { unlockAudio(); launchDemo() }}
                   className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-orange-500/25 to-fuchsia-500/25 border border-orange-400/40 text-orange-200 font-semibold text-sm">
                   <Star className="w-4 h-4" /> Cinematic demo
                 </button>
@@ -646,7 +651,7 @@ function App() {
         </div>
       </main>
 
-      {showDemo && <CinematicDemo onExit={() => setShowDemo(false)} />}
+      {showDemo && demoScript && <CinematicDemo script={demoScript} onExit={() => setShowDemo(false)} />}
     </div>
   )
 }
