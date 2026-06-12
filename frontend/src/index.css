@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@layer components {
+  .glass-panel {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+}
+
+body {
+  margin: 0;
+  background-color: black;
+  color: white;
+}
+
+/* Dart throw animation */
+@keyframes dart-throw {
+  0% {
+    opacity: 0;
+    transform: scale(8) translate3d(20px, -20px, 0) rotate(15deg);
+  }
+  30% {
+    opacity: 1;
+  }
+  80% {
+    transform: scale(0.9) translate3d(0, 0, 0) rotate(-2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translate3d(0, 0, 0) rotate(0deg);
+  }
+}
+
+.animate-dart-throw {
+  animation: dart-throw 0.35s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Dialog styling */
+dialog {
+  background: transparent;
+  color: white;
+  border: none;
+  padding: 0;
+}
+
+dialog::backdrop {
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}

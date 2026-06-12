@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Darts App specifics
+darts.log
+debug_snapshots/
+*.npz
+*.bak
+
+# Frontend (Node.js/Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.npm/
+frontend/.eslintcache
+frontend/.vite/

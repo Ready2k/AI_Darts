@@ -1,0 +1,654 @@
+import { useState, useEffect, useCallback } from 'react'
+import {
+  Settings, LineChart, Target, Camera, Crosshair,
+  Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star
+} from 'lucide-react'
+import {
+  BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell
+} from 'recharts'
+import DartBoard from './DartBoard'
+import AvatarPicker from './components/AvatarPicker'
+import OcheCam from './components/OcheCam'
+import Caricature from './art/Caricature'
+import { useThrowAnimation } from './hooks/useThrowAnimation'
+import CinematicDemo from './cinematic/CinematicDemo'
+import { unlockAudio } from './cinematic/audio'
+import { SCRIPTS } from './cinematic/scripts'
+import { getAvatar } from './config/avatars'
+
+const API_URL = 'http://localhost:8000/api'
+const WS_URL = 'ws://localhost:8000/ws/game'
+const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+// ── Live game state via WebSocket push (auto-reconnecting) ──────────────────
+function useGame() {
+  const [game, setGame] = useState(null)
+
+  useEffect(() => {
+    let stopped = false
+    let ws
+    let retry
+
+    const connect = () => {
+      ws = new WebSocket(WS_URL)
+      ws.onmessage = (e) => {
+        let data
+        try { data = JSON.parse(e.data) } catch { return }
+        setGame(data)
+      }
+      ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 1000) }
+      ws.onerror = () => ws.close()
+    }
+    connect()
+
+    return () => { stopped = true; clearTimeout(retry); if (ws) ws.close() }
+  }, [])
+
+  const refresh = useCallback(() => {}, [])
+  return [game, refresh]
+}
+
+const hasGame = (g) => g && g.running !== false && Array.isArray(g.players)
+
+// ── Scoreboard ─────────────────────────────────────────────────────────────
+function PlayerRow({ p, active, avatar }) {
+  const icon = getAvatar(avatar)
+  return (
+    <div className={`flex items-center justify-between rounded-xl px-5 py-4 border transition-all ${
+      active ? 'bg-cyan-500/10 border-cyan-400/50 shadow-[0_0_25px_rgba(0,240,255,0.15)]'
+             : 'bg-white/5 border-white/10'}`}>
+      <div className="flex items-center gap-3">
+        {icon && (
+          <div className="w-8 h-8 rounded-full overflow-hidden border border-white/20" style={{ background: icon.bg }}>
+            <Caricature variant={icon.variant} framing="bust" className="w-full h-full" />
+          </div>
+        )}
+        {active && !icon && <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
+        <div>
+          <div className={`font-semibold tracking-wide ${active ? 'text-white' : 'text-white/70'}`}>{p.name}</div>
+          <div className="text-[11px] text-white/40 uppercase tracking-wider">
+            Sets {p.sets} · Legs {p.legs} · {p.avg.toFixed(1)} avg
+          </div>
+        </div>
+      </div>
+      <div className={`text-4xl font-bold tabular-nums ${active ? 'text-cyan-300' : 'text-white/50'}`}>
+        {p.score}
+      </div>
+    </div>
+  )
+}
+
+function Scoreboard({ game, avatarMap }) {
+  if (!hasGame(game)) {
+    return (
+      <div className="text-center text-white/40 py-10 text-sm">
+        No game yet — start one in <span className="text-cyan-400">Settings</span>.
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-3">
+      {game.over && (
+        <div className="flex items-center gap-3 rounded-xl px-5 py-4 bg-emerald-500/15 border border-emerald-400/50">
+          <Trophy className="w-6 h-6 text-emerald-300" />
+          <span className="text-lg font-semibold text-emerald-200">{game.message}</span>
+        </div>
+      )}
+      {game.players.map((p, i) => (
+        <PlayerRow key={i} p={p} active={i === game.current && !game.over} avatar={avatarMap[p.name]} />
+      ))}
+    </div>
+  )
+}
+
+// ── Game setup form ─────────────────────────────────────────────────────────
+function GameSetup({ onStarted }) {
+  const [players, setPlayers] = useState([{ name: 'Player 1', avatar: 'pubguy' }])
+  const [gameMode, setGameMode] = useState('501')
+  const [startScore, setStartScore] = useState(501)
+  const [doubleOut, setDoubleOut] = useState(true)
+  const [legs, setLegs] = useState(3)
+  const [busy, setBusy] = useState(false)
+
+  const setPlayerName = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, name: v } : p)))
+  const setPlayerAvatar = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, avatar: v } : p)))
+  const addPlayer = () => players.length < 6 && setPlayers([...players, { name: `Player ${players.length + 1}`, avatar: 'pubguy' }])
+  const removePlayer = (i) => players.length > 1 && setPlayers(players.filter((_, j) => j !== i))
+
+  const start = async () => {
+    setBusy(true)
+    try {
+      const names = players.map(p => p.name)
+      await fetch(`${API_URL}/game/new`, {
+        method: 'POST', headers: JSON_HEADERS,
+        body: JSON.stringify({
+          players: names, start_score: startScore, double_in: false,
+          double_out: doubleOut, legs_to_win: legs, sets_to_win: 1,
+        }),
+      })
+      
+      const pMap = {}
+      players.forEach(p => pMap[p.name] = p.avatar)
+      onStarted?.(pMap)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="max-w-xl w-full mx-auto space-y-6 p-8">
+      <div>
+        <label className="text-xs uppercase tracking-widest text-white/40">Game Type</label>
+        <div className="flex gap-2 mt-2">
+          {['301', '501', '701', 'Cricket'].map(mode => (
+            <button key={mode} onClick={() => {
+              setGameMode(mode);
+              if (mode !== 'Cricket') setStartScore(parseInt(mode, 10));
+            }}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${
+                gameMode === mode 
+                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' 
+                  : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+              }`}>
+              {mode}
+            </button>
+          ))}
+        </div>
+        {gameMode === 'Cricket' && (
+          <div className="mt-3 text-xs text-amber-400/80 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+            Cricket is currently in development. Please select an X01 game mode.
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs uppercase tracking-widest text-white/40">Out Rule</label>
+          <div className="flex gap-2 mt-2">
+            <button onClick={() => setDoubleOut(false)}
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                !doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+              }`}>Straight Out</button>
+            <button onClick={() => setDoubleOut(true)}
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+              }`}>Double Out</button>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-widest text-white/40">Legs to Win</label>
+          <div className="flex gap-2 mt-2">
+            {[1, 3, 5].map(l => (
+              <button key={l} onClick={() => setLegs(l)}
+                className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                  legs === l ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                }`}>{l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs uppercase tracking-widest text-white/40">Players</label>
+        <div className="space-y-4 mt-2">
+          {players.map((p, i) => (
+            <div key={i} className="flex gap-4 items-center bg-white/5 p-3 rounded-xl border border-white/5">
+              <AvatarPicker selectedId={p.avatar} onChange={(id) => setPlayerAvatar(i, id)} />
+              <div className="flex-1 flex gap-2">
+                <input value={p.name} onChange={(e) => setPlayerName(i, e.target.value)}
+                  className="flex-1 px-4 py-2.5 rounded-lg bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm" />
+                {players.length > 1 && (
+                  <button onClick={() => removePlayer(i)}
+                    className="px-3 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/50 hover:text-red-300">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {players.length < 6 && (
+            <button onClick={addPlayer}
+              className="flex items-center gap-2 text-sm text-cyan-400/80 hover:text-cyan-300 px-2 py-1">
+              <Plus className="w-4 h-4" /> Add player
+            </button>
+          )}
+        </div>
+      </div>
+      <button onClick={start} disabled={busy || gameMode === 'Cricket'}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500/30 to-fuchsia-500/30 hover:from-cyan-500/40 hover:to-fuchsia-500/40 border border-cyan-400/30 font-semibold tracking-wide disabled:opacity-50">
+        <Check className="w-5 h-5" /> Start game
+      </button>
+    </div>
+  )
+}
+
+// ── MJPEG stream + input forwarding ────────────────────────────────────────
+function StreamViewer({ scriptName }) {
+  const [src] = useState(() => `${API_URL}/stream/${scriptName}?t=${Date.now()}`)
+  const post = (body) =>
+    fetch(`${API_URL}/event/${scriptName}`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body),
+    }).catch(() => {})
+
+  useEffect(() => {
+    const onKey = (e) => post({ type: 'keydown', key: e.key })
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [scriptName])
+
+  const mouse = (e, type) => {
+    const img = e.currentTarget.querySelector('img')
+    if (!img) return
+    const rect = img.getBoundingClientRect()
+    const nw = img.naturalWidth || 960
+    const nh = img.naturalHeight || 540
+    const imgRatio = nw / nh
+    const rectRatio = rect.width / rect.height
+    let rw = rect.width, rh = rect.height, ox = 0, oy = 0
+    if (imgRatio > rectRatio) { rh = rect.width / imgRatio; oy = (rect.height - rh) / 2 }
+    else { rw = rect.height * imgRatio; ox = (rect.width - rw) / 2 }
+    const x = ((e.clientX - rect.left - ox) / rw) * nw
+    const y = ((e.clientY - rect.top - oy) / rh) * nh
+    post({ type, x, y })
+  }
+
+  return (
+    <div
+      className="relative w-full h-full flex items-center justify-center bg-black/40 rounded-xl overflow-hidden border border-white/10"
+      onPointerDown={(e) => mouse(e, 'mousedown')}
+      onPointerMove={(e) => e.buttons > 0 && mouse(e, 'mousemove')}
+      onPointerUp={(e) => mouse(e, 'mouseup')}
+    >
+      <img src={src} className="max-w-full max-h-full object-contain pointer-events-none" alt={`${scriptName} stream`} />
+    </div>
+  )
+}
+
+function GameControls({ onRefresh, onNewGame }) {
+  const [confirmEnd, setConfirmEnd] = useState(false)
+
+  const undo = async () => {
+    await fetch(`${API_URL}/game/undo`, { method: 'POST' }).catch(() => {})
+    onRefresh?.()
+  }
+  const endGame = async () => {
+    await fetch(`${API_URL}/game/end`, { method: 'POST' }).catch(() => {})
+    setConfirmEnd(false)
+    onRefresh?.()
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-3">
+        <button onClick={undo} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-semibold transition-colors">
+          <Undo2 className="w-4 h-4" /> Undo dart
+        </button>
+        <button onClick={onNewGame} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 text-cyan-200 text-sm font-semibold transition-colors">
+          <RefreshCw className="w-4 h-4" /> New game
+        </button>
+      </div>
+      <button onClick={async () => { await fetch(`${API_URL}/debug/simulate_hit`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ label: "T20" }) }); onRefresh?.(); }}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/25 border border-fuchsia-400/30 text-fuchsia-200 text-sm font-semibold transition-colors">
+        <Target className="w-4 h-4" /> Simulate Treble 20 Throw
+      </button>
+      <button onClick={() => { unlockAudio(); window.dispatchEvent(new CustomEvent('start-demo')) }}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/15 hover:bg-orange-500/25 border border-orange-400/30 text-orange-200 text-sm font-semibold transition-colors uppercase tracking-widest">
+        <Star className="w-4 h-4" /> Run Cinematic Demo
+      </button>
+      {!confirmEnd ? (
+        <button onClick={() => setConfirmEnd(true)} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-400/30 text-white/50 hover:text-red-300 text-sm font-semibold transition-colors">
+          <Square className="w-4 h-4" /> End game
+        </button>
+      ) : (
+        <div className="flex gap-2">
+          <button onClick={endGame} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-sm font-semibold transition-colors">
+            <Check className="w-4 h-4" /> Confirm end
+          </button>
+          <button onClick={() => setConfirmEnd(false)} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 text-sm font-semibold transition-colors">
+            <X className="w-4 h-4" /> Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DebugSnapshot() {
+  const [status, setStatus] = useState(null)
+  const snap = async () => {
+    setStatus('saving…')
+    try {
+      const r = await fetch(`${API_URL}/debug/snapshot`, { method: 'POST' })
+      const d = await r.json()
+      setStatus(`✓ ${d.ts}`)
+    } catch { setStatus('failed') }
+    setTimeout(() => setStatus(null), 4000)
+  }
+  return (
+    <button onClick={snap} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-400/30 text-white/40 hover:text-amber-300 text-xs font-semibold transition-colors">
+      <Bug className="w-3.5 h-3.5" />
+      {status ?? 'Debug snapshot'}
+    </button>
+  )
+}
+
+function Placeholder({ icon: Icon, title, text }) {
+  return (
+    <div className="text-center space-y-5 opacity-60">
+      <Icon className="w-20 h-20 mx-auto text-white/20" strokeWidth={1} />
+      <div>
+        <h3 className="text-xl font-light tracking-wider mb-2">{title}</h3>
+        <p className="text-white/50 max-w-md mx-auto text-sm">{text}</p>
+      </div>
+    </div>
+  )
+}
+
+function StreamPanel({ script, label, hint, extraButtons }) {
+  const [on, setOn] = useState(false)
+  return (
+    <div className="w-full h-full flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <button onClick={() => setOn(!on)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${on ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
+          {on ? <><Square className="w-3 h-3" /> Stop</> : <><Play className="w-3 h-3" /> Start {label}</>}
+        </button>
+        {on && extraButtons}
+        <span className="text-xs text-white/40">{hint}</span>
+      </div>
+      <div className="flex-1 min-h-0">
+        {on ? <StreamViewer scriptName={script} /> : <div className="w-full h-full flex items-center justify-center rounded-xl bg-black/30 border border-white/10"><Placeholder icon={Camera} title={`${label} idle`} text="Press Start to open the camera stream." /></div>}
+      </div>
+    </div>
+  )
+}
+
+function AlignButtons() {
+  const send = (type) => fetch(`${API_URL}/event/align`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ type }) }).catch(() => {})
+  return (
+    <>
+      <button onClick={() => send('auto')} className="px-3 py-2 rounded-lg bg-fuchsia-500/15 text-fuchsia-200 text-xs font-bold uppercase tracking-wider hover:bg-fuchsia-500/25">Auto-detect</button>
+      <button onClick={() => send('confirm')} className="px-3 py-2 rounded-lg bg-cyan-500/15 text-cyan-200 text-xs font-bold uppercase tracking-wider hover:bg-cyan-500/25">Confirm camera</button>
+      <button onClick={() => send('reset')} className="px-3 py-2 rounded-lg bg-white/5 text-white/60 text-xs font-bold uppercase tracking-wider hover:bg-white/10">Reset</button>
+      <DebugSnapshot />
+    </>
+  )
+}
+
+function CorrectionBoard({ game, onRefresh }) {
+  const [armed, setArmed] = useState(false)
+  if (!hasGame(game)) return null
+
+  const pick = async (x_mm, y_mm) => {
+    await fetch(`${API_URL}/game/correct`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ x_mm, y_mm }),
+    }).catch(() => {})
+    setArmed(false)
+    onRefresh?.()
+  }
+  const hasDart = game.turn && game.turn.some((d) => d.pos)
+
+  return (
+    <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-widest text-white/40">Board</span>
+        <button onClick={() => setArmed(!armed)} disabled={!hasDart}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors ${
+            armed ? 'bg-cyan-500/25 border-cyan-400/50 text-cyan-200'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'} disabled:opacity-40`}>
+          {armed ? 'Cancel' : 'Correct last dart'}
+        </button>
+      </div>
+      <DartBoard darts={game.turn} armed={armed} onPick={pick} />
+    </div>
+  )
+}
+
+function MatchHistory() {
+  const [rows, setRows] = useState([])
+  useEffect(() => { fetch(`${API_URL}/history`).then((r) => r.json()).then(setRows).catch(() => setRows([])) }, [])
+  if (rows.length === 0) return null
+  return (
+    <div className="rounded-xl bg-black/30 border border-white/10 p-4">
+      <div className="text-xs uppercase tracking-widest text-white/40 mb-3">Recent matches</div>
+      <div className="space-y-2">
+        {rows.map((m, i) => (
+          <div key={i} className="flex items-center justify-between text-sm border-b border-white/5 last:border-0 pb-2 gap-3">
+            <div className="flex items-center gap-2 shrink-0">
+              <Trophy className="w-4 h-4 text-emerald-300" />
+              <span className="font-medium">{m.winner}</span>
+              <span className="text-white/40 text-xs">{m.start_score}·{m.double_out ? 'DO' : 'SO'}</span>
+            </div>
+            <div className="text-white/50 text-xs truncate">
+              {m.players.map((p) => `${p.name} ${p.sets}-${p.legs} (${p.avg})`).join('  ·  ')}
+            </div>
+            <span className="text-white/30 text-xs shrink-0">{m.ts}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Stats({ game }) {
+  const data = hasGame(game) ? game.players.map((p) => ({ name: p.name, avg: Number(p.avg.toFixed(1)) })) : []
+  const colors = ['#22d3ee', '#e879f9', '#34d399', '#fbbf24', '#f87171', '#a78bfa']
+  return (
+    <div className="w-full max-w-3xl mx-auto space-y-6">
+      {!hasGame(game) && <Placeholder icon={LineChart} title="No active game" text="Start a game to see live averages." />}
+      {hasGame(game) && (<>
+      <div className="h-64 rounded-xl bg-black/30 border border-white/10 p-4">
+        <div className="text-xs uppercase tracking-widest text-white/40 mb-2">3-dart average</div>
+        <ResponsiveContainer width="100%" height="90%">
+          <BarChart data={data}>
+            <XAxis dataKey="name" tick={{ fill: '#ffffff80', fontSize: 12 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: '#ffffff60', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <Tooltip cursor={{ fill: '#ffffff10' }} contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: 8 }} />
+            <Bar dataKey="avg" radius={[6, 6, 0, 0]}>
+              {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="rounded-xl bg-black/30 border border-white/10 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="text-white/40 uppercase tracking-wider text-[11px]">
+            <tr className="border-b border-white/10">
+              <th className="text-left px-5 py-3">Player</th>
+              <th className="text-right px-5 py-3">Remaining</th>
+              <th className="text-right px-5 py-3">Darts</th>
+              <th className="text-right px-5 py-3">Avg</th>
+              <th className="text-right px-5 py-3">Legs</th>
+              <th className="text-right px-5 py-3">Sets</th>
+            </tr>
+          </thead>
+          <tbody>
+            {game.players.map((p, i) => (
+              <tr key={i} className="border-b border-white/5 last:border-0">
+                <td className="px-5 py-3 font-medium">{p.name}</td>
+                <td className="px-5 py-3 text-right tabular-nums">{p.score}</td>
+                <td className="px-5 py-3 text-right tabular-nums text-white/60">{p.darts}</td>
+                <td className="px-5 py-3 text-right tabular-nums text-cyan-300">{p.avg.toFixed(1)}</td>
+                <td className="px-5 py-3 text-right tabular-nums">{p.legs}</td>
+                <td className="px-5 py-3 text-right tabular-nums">{p.sets}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </>)}
+      <MatchHistory />
+    </div>
+  )
+}
+
+const TABS = [
+  { name: 'Dashboard', icon: Layers },
+  { name: 'Live Track', icon: Target },
+  { name: 'Align', icon: Crosshair },
+  { name: 'Cameras', icon: Camera },
+  { name: 'Stats', icon: LineChart },
+  { name: 'Settings', icon: Settings },
+]
+
+// ── App shell ───────────────────────────────────────────────────────────────
+function App() {
+  const [activeTab, setActiveTab] = useState('Dashboard')
+  const [game] = useGame()
+  const [avatarMap, setAvatarMap] = useState({})
+  const [showDemo, setShowDemo] = useState(false)
+
+  const { animState, triggerThrow } = useThrowAnimation()
+
+  useEffect(() => {
+    const handleStartDemo = () => setShowDemo(true)
+    window.addEventListener('start-demo', handleStartDemo)
+    return () => window.removeEventListener('start-demo', handleStartDemo)
+  }, [])
+
+  const leader = hasGame(game) ? [...game.players].sort((a, b) => a.score - b.score)[0] : null
+
+  // Custom refresh logic to wait for animation
+  const [displayedGame, setDisplayedGame] = useState(game)
+  const uiGame = displayedGame || game
+
+  useEffect(() => {
+    if (!game?.running || !displayedGame?.running) {
+      setTimeout(() => setDisplayedGame(game), 0);
+      return;
+    }
+    
+    const prevTurnCount = displayedGame.turn ? displayedGame.turn.length : 0;
+    const nextTurnCount = game.turn ? game.turn.length : 0;
+    
+    // A new dart has arrived!
+    if (nextTurnCount > prevTurnCount) {
+      const newDart = game.turn[nextTurnCount - 1];
+      triggerThrow({
+        dartResult: newDart,
+        mode: 'detected',
+        onScored: () => {
+          setDisplayedGame(game);
+        }
+      });
+    } else if (nextTurnCount < prevTurnCount || game.current !== displayedGame.current) {
+      // Turn reset or player changed (e.g. bust, undo, next turn)
+      setTimeout(() => setDisplayedGame(game), 0);
+    }
+  }, [game, triggerThrow, displayedGame]);
+
+  const refresh = async () => {}
+
+  return (
+    <div className="flex h-screen bg-black text-white font-sans overflow-hidden">
+      <div className="absolute inset-0 z-0 opacity-40 mix-blend-screen pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-[#FF0055] rounded-full blur-[150px] animate-pulse-slow" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-[#00F0FF] rounded-full blur-[150px] animate-pulse-slow" style={{ animationDelay: '2s' }} />
+        <div className="absolute top-[40%] left-[40%] w-[30%] h-[30%] bg-[#7000FF] rounded-full blur-[120px] animate-pulse-slow" style={{ animationDelay: '4s' }} />
+      </div>
+
+      {/* Sidebar */}
+      <aside className="w-64 flex flex-col z-10 glass-panel border-r border-white/5 m-4 rounded-2xl shadow-2xl">
+        <div className="p-6 pb-2">
+          <h1 className="text-2xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-fuchsia-500 mb-1">
+            DARTS.AI
+          </h1>
+          <p className="text-xs text-white/50 tracking-widest uppercase">Pro Vision System</p>
+        </div>
+        <nav className="flex-1 px-4 py-6 space-y-2">
+          {TABS.map((tab) => {
+            const Icon = tab.icon
+            const isActive = activeTab === tab.name
+            return (
+              <button key={tab.name} onClick={() => setActiveTab(tab.name)}
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all group ${
+                  isActive ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                           : 'text-white/60 hover:bg-white/5 hover:text-white'}`}>
+                <Icon className={`w-5 h-5 ${isActive ? 'scale-110 text-cyan-400' : 'group-hover:text-cyan-400'}`} />
+                <span className="font-medium tracking-wide text-sm">{tab.name}</span>
+                {isActive && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+              </button>
+            )
+          })}
+        </nav>
+        <div className="p-4 m-4 rounded-xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10">
+          <div className="flex items-center space-x-3 mb-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs font-semibold text-white/80 uppercase tracking-wider">
+              {hasGame(uiGame) ? (uiGame.over ? 'Game over' : 'Game live') : 'Idle'}
+            </span>
+          </div>
+          <p className="text-[10px] text-white/40">
+            {hasGame(uiGame) ? `${uiGame.start_score} · ${uiGame.double_out ? 'double out' : 'straight out'}` : 'No game running'}
+          </p>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main className="flex-1 flex flex-col z-10 p-4 pl-0">
+        <header className="h-16 flex items-center justify-between px-8 glass-panel rounded-2xl shadow-xl mb-4 border border-white/5">
+          <h2 className="text-xl font-light tracking-wide">{activeTab}</h2>
+          {leader && !uiGame.over && (
+            <div className="text-sm text-white/50">
+              Leader: <span className="text-cyan-300 font-semibold">{leader.name}</span> · {leader.score}
+            </div>
+          )}
+        </header>
+
+        <div className="flex-1 glass-panel rounded-2xl shadow-2xl border border-white/5 p-8 overflow-auto">
+          {activeTab === 'Dashboard' && (
+            <div className="h-full flex flex-col items-center justify-center gap-8">
+              <Placeholder icon={Target} title="Welcome to DARTS.AI"
+                text="3-camera computer-vision dart scoring with full X01 game logic, checkout suggestions and live stats." />
+              <div className="flex gap-3 flex-wrap justify-center">
+                <button onClick={() => setActiveTab('Settings')}
+                  className="px-5 py-3 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 font-semibold text-sm">New game</button>
+                <button onClick={() => setActiveTab('Live Track')}
+                  className="px-5 py-3 rounded-xl bg-white/5 border border-white/10 font-semibold text-sm">Live tracking</button>
+                <button onClick={() => setActiveTab('Align')}
+                  className="px-5 py-3 rounded-xl bg-white/5 border border-white/10 font-semibold text-sm">Align cameras</button>
+                <button onClick={() => { unlockAudio(); setShowDemo(true) }}
+                  className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-orange-500/25 to-fuchsia-500/25 border border-orange-400/40 text-orange-200 font-semibold text-sm">
+                  <Star className="w-4 h-4" /> Cinematic demo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'Live Track' && (
+            <div className="h-full grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6">
+              <div className="flex flex-col gap-3 min-h-0">
+                <StreamPanel script="detect" label="detection"
+                  hint="Throw darts — scores are read automatically."
+                  extraButtons={<DebugSnapshot />} />
+              </div>
+              <div className="flex flex-col space-y-4 overflow-auto">
+                <Scoreboard game={uiGame} avatarMap={avatarMap} />
+                <OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />
+                {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
+                <CorrectionBoard game={uiGame} onRefresh={refresh} />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'Align' && (
+            <StreamPanel script="align" label="alignment" extraButtons={<AlignButtons />}
+              hint="Auto-detect to fit the board, rotate handles so numbers line up, then Confirm each camera." />
+          )}
+
+          {activeTab === 'Cameras' && (
+            <StreamPanel script="check" label="cameras"
+              hint="Live feed + FPS for every USB camera." />
+          )}
+
+          {activeTab === 'Stats' && <Stats game={uiGame} />}
+
+          {activeTab === 'Settings' && (
+            <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); refresh(); setActiveTab('Live Track') }} />
+          )}
+        </div>
+      </main>
+
+      {showDemo && <CinematicDemo onExit={() => setShowDemo(false)} />}
+    </div>
+  )
+}
+
+export default App

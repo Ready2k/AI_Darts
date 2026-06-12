@@ -1,0 +1,148 @@
+
+--- CHUNK 1 TargetContent ---
+import { useState, useEffect, useCallback } from 'react'
+--- CHUNK 2 TargetContent ---
+function CorrectionBoard({ game, onRefresh }) {
+  const [armed, setArmed] = useState(false)
+  if (!hasGame(game)) return null
+
+  const pick = async (x_mm, y_mm) => {
+    await fetch(`${API_URL}/game/correct`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ x_mm, y_mm }),
+    }).catch(() => {})
+    setArmed(false)
+    onRefresh?.()
+  }
+  const hasDart = game.turn.some((d) => d.pos)
+
+  return (
+    <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-widest text-white/40">Board</span>
+        <button onClick={() => setArmed(!armed)} disabled={!hasDart}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors ${
+            armed ? 'bg-cyan-500/25 border-cyan-400/50 text-cyan-200'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'} disabled:opacity-40`}>
+          {armed ? 'Cancel' : 'Correct last dart'}
+        </button>
+      </div>
+      <DartBoard darts={game.turn} armed={armed} onPick={pick} />
+    </div>
+  )
+}
+--- CHUNK 1 TargetContent ---
+import { Check, Edit2, Play, Plus, RefreshCw, Undo2, X, Target } from 'lucide-react'
+import DartBoard from './DartBoard'
+
+const API_URL = '/api'
+--- CHUNK 2 TargetContent ---
+  const [armed, setArmed] = useState(false)
+  const dialogRef = useRef(null)
+
+  const refresh = async () => {
+--- CHUNK 3 TargetContent ---
+  const hasDart = game && game.turn && game.turn.length > 0
+
+  const undo = async () => {
+    await fetch(`${API_URL}/game/undo`, { method: 'POST', headers: JSON_HEADERS })
+  }
+--- CHUNK 4 TargetContent ---
+  return (
+    <div className="flex-1 min-h-0 flex flex-col p-4">
+      <div className="flex-1 flex gap-6 min-h-0 mb-6">
+        <div className="w-[320px] flex-shrink-0 flex flex-col min-h-0">
+          <Scoreboard game={game} />
+        </div>
+        <div className="flex-1 flex flex-col bg-[#0a0a0a] rounded-3xl border border-white/5 overflow-hidden">
+          <div className="px-4 py-3 bg-white/[0.02] border-b border-white/5 flex items-center justify-between">
+            <span className="text-sm font-semibold tracking-wider text-white/50">BOARD CAMERA</span>
+            <div className="flex gap-2">
+              <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-cyan-500 uppercase tracking-wider">Live</span>
+            </div>
+          </div>
+          <div className="flex-1 relative bg-black/50">
+            {imgSrc && <img src={imgSrc} className="absolute inset-0 w-full h-full object-contain" />}
+          </div>
+        </div>
+      </div>
+      
+      <div className="h-32 flex-shrink-0">
+        <GameControls onNewGame={() => setTab('setup')} undo={undo} onRefresh={refresh} confirmEnd={confirmEnd} setConfirmEnd={setConfirmEnd} end={end} />
+      </div>
+    </div>
+  )
+}
+
+function Scoreboard({ game }) {
+--- CHUNK 5 TargetContent ---
+          {game?.message && (
+            <div className="mt-4 px-4 py-3 rounded-xl bg-cyan-900/20 border border-cyan-500/20 text-cyan-300 text-sm text-center">
+              {game.message}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Correction board ────────────────────────────────────────────────────────
+function CorrectionBoard({ game, armed, setArmed, pick, hasDart, dialogRef }) {
+  return (
+    <div className="flex flex-col gap-6 w-full max-w-sm mx-auto h-full">
+--- CHUNK 6 TargetContent ---
+function GameSetup({ onStarted }) {
+  const [players, setPlayers] = useState(['Player 1'])
+  const [startScore, setStartScore] = useState(501)
+  const [doubleOut, setDoubleOut] = useState(true)
+  const [doubleIn, setDoubleIn] = useState(false)
+  const [legs, setLegs] = useState(3)
+  const [busy, setBusy] = useState(false)
+
+  const setPlayer = (i, v) => setPlayers(players.map((p, j) => (j === i ? v : p)))
+  const addPlayer = () => players.length < 6 && setPlayers([...players, `Player ${players.length + 1}`])
+  const removePlayer = (i) => players.length > 1 && setPlayers(players.filter((_, j) => j !== i))
+
+  const start = async () => {
+    setBusy(true)
+    try {
+      await fetch(`${API_URL}/game/new`, {
+        method: 'POST', headers: JSON_HEADERS,
+        body: JSON.stringify({
+          players, start_score: startScore, double_in: doubleIn,
+          double_out: doubleOut, legs_to_win: legs, sets_to_win: 1,
+        }),
+      })
+      onStarted?.()
+    } finally { setBusy(false) }
+  }
+--- CHUNK 7 TargetContent ---
+        <div className="space-y-2 mt-2">
+          {players.map((p, i) => (
+            <div key={i} className="flex gap-2">
+              <input value={p} onChange={(e) => setPlayer(i, e.target.value)}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-cyan-400/50 outline-none text-sm" />
+              {players.length > 1 && (
+                <button onClick={() => removePlayer(i)}
+                  className="px-3 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/50 hover:text-red-300">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ))}
+--- CHUNK 8 TargetContent ---
+  return (
+    <div className="min-h-screen bg-[#050505] text-white font-sans flex flex-col overflow-hidden">
+      <Header />
+      <div className="flex-1 overflow-auto min-h-0">
+        {tab === 'setup' && <GameSetup onStarted={() => setTab('live')} />}
+        {tab === 'live' && <LiveTrack game={game} setGame={setGame} end={() => setTab('setup')} />}
+        {tab === 'history' && <MatchHistory />}
+      </div>
+      <Nav tab={tab} setTab={setTab} />
+    </div>
+  )
+}
+
+export default App
