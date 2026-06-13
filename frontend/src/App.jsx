@@ -396,8 +396,8 @@ function Placeholder({ icon: Icon, title, text }) {
   )
 }
 
-function StreamPanel({ script, label, hint, extraButtons, allowPopout }) {
-  const [on, setOn] = useState(false)
+function StreamPanel({ script, label, hint, extraButtons, allowPopout, autoStart = false }) {
+  const [on, setOn] = useState(autoStart)
   const [popout, setPopout] = useState(false)
   
   const content = (
@@ -699,6 +699,9 @@ function App() {
   const [cinematicMode, setCinematicMode] = useState(
     () => localStorage.getItem('cinematicMode') === '1'
   )
+  // Set when a game is started so the Live Track detection stream opens the
+  // cameras automatically instead of waiting for a manual "Start detection".
+  const [autoStartDetect, setAutoStartDetect] = useState(false)
 
   // Toggle cinematic mode; enabling it is a user gesture so we can unlock audio
   // and switch the caller voice on for the live broadcast.
@@ -947,7 +950,8 @@ function App() {
                       <StreamPanel script="detect" label="detection"
                         hint="Click to popout"
                         extraButtons={<DebugSnapshot />}
-                        allowPopout />
+                        allowPopout
+                        autoStart={autoStartDetect} />
                     </div>
                   </div>
                 </div>
@@ -977,7 +981,7 @@ function App() {
                 </div>
                 <CinematicToggle on={cinematicMode} onChange={setCinematic} />
               </div>
-              <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); refresh(); setActiveTab('Live Track') }} />
+              <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); setAutoStartDetect(true); refresh(); setActiveTab('Live Track') }} />
             </div>
           )}
         </div>
