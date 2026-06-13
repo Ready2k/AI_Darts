@@ -162,14 +162,44 @@ class CameraReader:
     def stop(self):
         self._stop.set()
         self._thread.join(timeout=2)
-        self.cap.release()
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+    def _reopen(self):
+        # A camera can be momentarily busy when a superseded detection session
+        # hasn't released it yet (USB devices allow a single owner). Re-acquire
+        # until it opens so the reader self-heals instead of going dead — which
+        # would otherwise stall capture_background's warmup drain forever.
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+        self.cap = cv2.VideoCapture(self.index)
 
     def _run(self):
+        fails = 0
         while not self._stop.is_set():
+            if not self.cap.isOpened():
+                self._reopen()
+                if not self.cap.isOpened():
+                    if self._stop.wait(0.3):
+                        break
+                    continue
             ret, frame = self.cap.read()
             if ret:
                 with self._lock:
                     self._frame = frame
+                fails = 0
+            else:
+                # Device dropped or never really opened — try to reacquire.
+                fails += 1
+                if fails >= 30:
+                    self._reopen()
+                    fails = 0
+                    if self._stop.wait(0.3):
+                        break
 
     def get_frame(self):
         with self._lock:
@@ -231,19 +261,24 @@ def roi_from_homography(H, shape):
                                flags=cv2.WARP_INVERSE_MAP | cv2.INTER_NEAREST)
 
 
-def capture_background(readers, n_frames=20, warmup_frames=30, homographies=None):
+def capture_background(readers, n_frames=20, warmup_frames=30, homographies=None,
+                       per_cam_timeout=10.0):
     print("Capturing background - keep board empty...")
     backgrounds = {}
     rois        = {}
     board_info  = {}
     homographies = homographies or {}
     for reader in readers:
-        # Drain warmup_frames to let auto-exposure/AWB settle before accumulating
+        # Drain warmup_frames to let auto-exposure/AWB settle before accumulating.
+        # Bounded by per_cam_timeout so a camera that never delivers frames (e.g.
+        # unplugged, or wedged) can't hang startup forever.
         drained = 0
         last_frame = None
-        while drained < warmup_frames:
+        deadline = time.time() + per_cam_timeout
+        while drained < warmup_frames and time.time() < deadline:
             frame = reader.get_frame()
             if frame is None:
+                time.sleep(0.005)
                 continue
             if frame is not last_frame:
                 drained += 1
@@ -252,15 +287,22 @@ def capture_background(readers, n_frames=20, warmup_frames=30, homographies=None
         accum = None
         count = 0
         last_frame = None
-        while count < n_frames:
+        deadline = time.time() + per_cam_timeout
+        while count < n_frames and time.time() < deadline:
             frame = reader.get_frame()
             if frame is None or frame is last_frame:
+                time.sleep(0.005)
                 continue
             last_frame = frame
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
             accum = gray if accum is None else accum + gray
             count += 1
-        bg = (accum / n_frames).astype(np.uint8)
+
+        if accum is None or count == 0:
+            label = LABELS.get(reader.index, f"Camera {reader.index}")
+            print(f"  {label}: no frames within {per_cam_timeout:.0f}s — skipping this camera")
+            continue
+        bg = (accum / count).astype(np.uint8)
         H = homographies.get(reader.index)
         if H is not None:
             mask = roi_from_homography(H, bg.shape)
@@ -679,6 +721,8 @@ def _setup_logging():
 
 
 _detect_session = 0   # bumped on every new detection stream; only the latest runs
+_cameras_free = threading.Event()   # set while no session is holding the cameras
+_cameras_free.set()
 
 
 def stream_frames(event_queue):
@@ -690,7 +734,18 @@ def stream_frames(event_queue):
     _detect_session += 1
     my_session = _detect_session
     print(f"Starting dart detection stream (session {my_session})...")
-    time.sleep(0.4)   # let any previous session notice and release the cameras
+
+    # Wait for any previous session to fully release the USB cameras before we
+    # open them. Opening a still-busy device yields a reader that never produces
+    # frames, which used to stall background capture forever ("not finding
+    # cameras"). The previous holder sets _cameras_free in its finally block.
+    if not _cameras_free.wait(timeout=8):
+        print(f"Session {my_session}: timed out waiting for previous camera release — opening anyway.")
+    if my_session != _detect_session:
+        print(f"Session {my_session} superseded before opening cameras — exiting.")
+        return
+    _cameras_free.clear()
+
     readers = [CameraReader(i).start() for i in CAMERAS]
     time.sleep(2.0)
 
@@ -717,6 +772,17 @@ def stream_frames(event_queue):
         print("No alignment.json found — run './start.sh align' to enable merged board view")
 
     backgrounds, rois, board_info = capture_background(readers, homographies=homographies)
+    # Drop any camera that produced no background (skipped on timeout) so the
+    # detection loop below — which indexes backgrounds[reader.index] — only ever
+    # sees cameras that are actually delivering frames.
+    dead = [r for r in readers if r.index not in backgrounds]
+    for r in dead:
+        r.stop()
+    readers = [r for r in readers if r.index in backgrounds]
+    if not readers:
+        print("No cameras delivered frames — aborting detection stream.")
+        _cameras_free.set()
+        return
     # Per-dart detection references: start equal to the empty board, then have
     # each scored dart absorbed into them so the next dart is the only diff.
     bg_detect = {i: b.copy() for i, b in backgrounds.items()}
@@ -1160,6 +1226,8 @@ def stream_frames(event_queue):
     finally:
         for r in readers:
             r.stop()
+        # Signal the next session that the cameras are free to be re-opened.
+        _cameras_free.set()
 
 def main():
     pass
