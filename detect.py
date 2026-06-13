@@ -822,9 +822,11 @@ def stream_frames(event_queue):
 
     if GAME is None:
         new_game()
+    # players may be plain names or per-player config dicts ({"name", "is_ai", ...})
+    _names = [p["name"] if isinstance(p, dict) else str(p) for p in GAME_CONFIG['players']]
     print(f"Game ready: {GAME_CONFIG['start_score']} "
           f"({'double-out' if GAME_CONFIG['double_out'] else 'straight-out'}) "
-          f"— players: {', '.join(GAME_CONFIG['players'])}")
+          f"— players: {', '.join(_names)}")
 
     dart_state                = "watching"
     scored_canonical          = []
