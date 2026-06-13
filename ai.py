@@ -116,11 +116,19 @@ async def ai_loop():
             # Re-check inside lock if it's AI's turn
             if not game.player.is_ai:
                 continue
-            
+
+            # Don't throw until the human's darts have been physically
+            # removed from the board.  When a turn ends the engine advances
+            # to the AI immediately, but detection is still in 'all_done'
+            # waiting for the board to be cleared — throwing now is way too
+            # quick.  Wait for the board to clear (awaiting_clear -> False).
+            if detect.STATUS.get("awaiting_clear"):
+                continue
+
             # Ensure turn isn't over just in case
             if game.darts_left <= 0:
                 continue
-                
+
             level = game.player.ai_level
 
         # Outside the lock, wait a realistic time

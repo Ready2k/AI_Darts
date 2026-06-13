@@ -134,6 +134,7 @@ function GameSetup({ onStarted }) {
   const [startScore, setStartScore] = useState(501)
   const [doubleOut, setDoubleOut] = useState(true)
   const [legs, setLegs] = useState(3)
+  const [debug, setDebug] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const setPlayerName = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, name: v } : p)))
@@ -156,7 +157,7 @@ function GameSetup({ onStarted }) {
         method: 'POST', headers: JSON_HEADERS,
         body: JSON.stringify({
           players: playerConfigs, start_score: startScore, double_in: false,
-          double_out: doubleOut, legs_to_win: legs, sets_to_win: 1,
+          double_out: doubleOut, legs_to_win: legs, sets_to_win: 1, debug,
         }),
       })
       
@@ -269,6 +270,19 @@ function GameSetup({ onStarted }) {
           )}
         </div>
       </div>
+      <button onClick={() => setDebug(!debug)}
+        className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-semibold border transition-all ${
+          debug ? 'bg-amber-500/20 border-amber-400/50 text-amber-300' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+        }`}>
+        <span className="flex flex-col text-left">
+          <span>Debug recording</span>
+          <span className="text-[11px] font-normal opacity-60">Record video + telemetry of this match to debug_recordings/ for diagnosis</span>
+        </span>
+        <span className={`shrink-0 w-10 h-6 rounded-full p-0.5 transition-colors ${debug ? 'bg-amber-400/70' : 'bg-white/15'}`}>
+          <span className={`block w-5 h-5 rounded-full bg-white transition-transform ${debug ? 'translate-x-4' : ''}`} />
+        </span>
+      </button>
+
       <button onClick={start} disabled={busy || gameMode === 'Cricket'}
         className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500/30 to-fuchsia-500/30 hover:from-cyan-500/40 hover:to-fuchsia-500/40 border border-cyan-400/30 font-semibold tracking-wide disabled:opacity-50">
         <Check className="w-5 h-5" /> Start game

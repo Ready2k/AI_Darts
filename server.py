@@ -76,6 +76,9 @@ async def _watch_game():
                 if detect.GAME:
                     print("Game is over, saving match history...")
                     history.save_match(detect.GAME)
+                # Flush/close any debug recording so the video + telemetry are
+                # finalised and ready to zip up.
+                detect.dbg.stop()
             game_was_over = over_now
             
         except Exception as e:
@@ -93,6 +96,8 @@ async def lifespan(app):
     finally:
         watcher.cancel()
         ai_task.cancel()
+        # Finalise any in-progress debug recording so the video is playable.
+        detect.dbg.stop()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -107,7 +112,9 @@ app.add_middleware(
 )
 
 ALIGN_EVENTS = []
-DETECT_EVENTS = []
+# Detect input events live on the detect module so the background detection
+# worker (which the stream just observes) can drain them.
+DETECT_EVENTS = detect.DETECT_EVENTS
 
 
 async def _guarded_stream(gen, request: Request):
@@ -173,6 +180,7 @@ async def new_game(request: Request):
         double_out=cfg.get("double_out"),
         legs_to_win=cfg.get("legs_to_win"),
         sets_to_win=cfg.get("sets_to_win"),
+        debug=bool(cfg.get("debug", False)),
     )
     return detect.game_state()
 
@@ -182,6 +190,8 @@ def undo_game():
     """Undo the last recorded dart (manual misread correction)."""
     with detect.GAME_LOCK:
         ok = detect.GAME.undo() if detect.GAME else False
+    if ok:
+        detect.dbg.event("undo", source="api")
     return {"ok": ok, "game": detect.game_state()}
 
 
@@ -191,6 +201,7 @@ def end_game():
     with detect.GAME_LOCK:
         detect.GAME = None
     detect.STATUS["game_gen"] += 1
+    detect.dbg.stop()
     return {"ok": True}
 
 
@@ -213,6 +224,10 @@ async def correct_game(request: Request):
     hit = dartboard.score_detail(float(data["x_mm"]), float(data["y_mm"]))
     with detect.GAME_LOCK:
         ev = detect.GAME.correct_last(hit, (float(data["x_mm"]), float(data["y_mm"]))) if detect.GAME else None
+    if ev is not None:
+        detect.dbg.event("correct", label=hit.label, ring=hit.ring,
+                         segment=hit.segment, x_mm=float(data["x_mm"]),
+                         y_mm=float(data["y_mm"]))
     return {"ok": ev is not None, "label": hit.label, "game": detect.game_state()}
 
 @app.post("/api/debug/simulate_hit")
@@ -245,9 +260,8 @@ async def detect_event(request: Request):
 
 @app.get("/api/stream/detect")
 async def stream_detect(request: Request):
-    DETECT_EVENTS.clear()
     return StreamingResponse(
-        _guarded_stream(detect.stream_frames(DETECT_EVENTS), request),
+        _guarded_stream(detect.stream_frames(), request),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
@@ -260,6 +274,8 @@ async def align_event(request: Request):
 @app.get("/api/stream/align")
 async def stream_align(request: Request):
     ALIGN_EVENTS.clear()
+    # Align needs exclusive camera access — release the detection worker first.
+    await run_in_threadpool(detect.stop_detection)
     return StreamingResponse(
         _guarded_stream(align.stream_frames(ALIGN_EVENTS), request),
         media_type="multipart/x-mixed-replace; boundary=frame"
@@ -267,6 +283,8 @@ async def stream_align(request: Request):
 
 @app.get("/api/stream/check")
 async def stream_check(request: Request):
+    # The Cameras viewer needs exclusive camera access too.
+    await run_in_threadpool(detect.stop_detection)
     return StreamingResponse(
         _guarded_stream(check_cameras.stream_frames(), request),
         media_type="multipart/x-mixed-replace; boundary=frame"

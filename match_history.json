@@ -37,5 +37,67 @@
         "darts": 9
       }
     ]
+  },
+  {
+    "ts": "2026-06-13 12:01",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": false,
+    "winner": "AI 1",
+    "players": [
+      {
+        "name": "AI 1",
+        "sets": 1,
+        "legs": 0,
+        "avg": 36.1,
+        "darts": 25
+      },
+      {
+        "name": "AI 2",
+        "sets": 0,
+        "legs": 0,
+        "avg": 27.4,
+        "darts": 24
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-13 12:04",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": true,
+    "winner": "Player 1",
+    "players": [
+      {
+        "name": "Player 1",
+        "sets": 1,
+        "legs": 0,
+        "avg": 60.2,
+        "darts": 15
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-13 15:08",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": false,
+    "winner": "Bot",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 31.0,
+        "darts": 29
+      },
+      {
+        "name": "Bot",
+        "sets": 1,
+        "legs": 0,
+        "avg": 28.2,
+        "darts": 32
+      }
+    ]
   }
 ]
