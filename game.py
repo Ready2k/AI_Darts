@@ -73,6 +73,17 @@ class X01Game:
         self.winner = None            # Player who won the match, or None
         self.message = ""             # last human-readable event
 
+        # Monotonic counter incremented on every dart — lets the frontend
+        # reliably detect the 3rd dart of a visit even though self.turn resets
+        # to [] synchronously in _advance_player.
+        self.dart_seq = 0
+        self.last_dart_label = None
+        self.last_dart_pos = None
+        # Keeps the just-completed visit's darts until the next visit starts
+        # so display_turn in to_dict() can show all 3 darts.
+        self._last_visit_turn = []
+        self._last_visit_pos = []
+
         self._undo_stack = []
 
     # ── helpers ────────────────────────────────────────────────────────────
@@ -164,6 +175,9 @@ class X01Game:
     # ── turn / leg bookkeeping ─────────────────────────────────────────────
 
     def _finish_dart(self, hit, position, bust, scored, message):
+        self.dart_seq += 1
+        self.last_dart_label = hit.label
+        self.last_dart_pos = list(position) if position else None
         self.turn.append(hit)
         self.turn_pos.append(position)
         self.message = message
@@ -182,6 +196,8 @@ class X01Game:
         self._advance_player()
 
     def _advance_player(self):
+        self._last_visit_turn = list(self.turn)
+        self._last_visit_pos = list(self.turn_pos)
         self.current = (self.current + 1) % len(self.players)
         self.turn = []
         self.turn_pos = []
@@ -191,6 +207,9 @@ class X01Game:
         p = self.player
         p.total_points += self.turn_start_score      # whole leg's worth scored
         p.total_darts  += len(self.turn) + 1
+        self.dart_seq += 1
+        self.last_dart_label = hit.label
+        self.last_dart_pos = list(position) if position else None
         self.turn.append(hit)
         self.turn_pos.append(position)
         p.legs += 1
@@ -218,6 +237,8 @@ class X01Game:
                            message=self.message)
 
     def _start_new_leg(self):
+        self._last_visit_turn = list(self.turn)
+        self._last_visit_pos = list(self.turn_pos)
         for q in self.players:
             q.score = self.start_score
             q.opened = False
@@ -244,6 +265,11 @@ class X01Game:
             "turn_start_score": self.turn_start_score,
             "winner": self.winner.name if self.winner else None,
             "message": self.message,
+            "dart_seq": self.dart_seq,
+            "last_dart_label": self.last_dart_label,
+            "last_dart_pos": self.last_dart_pos,
+            "_last_visit_turn": list(self._last_visit_turn),
+            "_last_visit_pos": list(self._last_visit_pos),
         }
 
     def undo(self):
@@ -260,6 +286,11 @@ class X01Game:
         self.turn_start_score = snap["turn_start_score"]
         self.winner = next((p for p in self.players if p.name == snap["winner"]), None)
         self.message = snap["message"]
+        self.dart_seq = snap.get("dart_seq", self.dart_seq)
+        self.last_dart_label = snap.get("last_dart_label")
+        self.last_dart_pos = snap.get("last_dart_pos")
+        self._last_visit_turn = list(snap.get("_last_visit_turn", []))
+        self._last_visit_pos = list(snap.get("_last_visit_pos", []))
         return True
 
     # ── serialisation ──────────────────────────────────────────────────────
@@ -280,6 +311,11 @@ class X01Game:
         }
 
     def to_dict(self):
+        # display_turn shows the current visit OR the just-completed visit when
+        # self.turn has already been reset (3rd dart case). This lets the
+        # frontend animate the 3rd dart even though self.turn is [].
+        disp_turn = self.turn if self.turn else self._last_visit_turn
+        disp_pos  = self.turn_pos if self.turn else self._last_visit_pos
         return {
             "start_score": self.start_score,
             "double_in": self.double_in,
@@ -288,10 +324,16 @@ class X01Game:
             "sets_to_win": self.sets_to_win,
             "current": self.current,
             "darts_left": self.darts_left,
+            "dart_seq": self.dart_seq,
             "turn": [
                 {"label": h.label, "points": h.points,
                  "pos": list(pos) if pos else None}
                 for h, pos in zip(self.turn, self.turn_pos)
+            ],
+            "display_turn": [
+                {"label": h.label, "points": h.points,
+                 "pos": list(pos) if pos else None}
+                for h, pos in zip(disp_turn, disp_pos)
             ],
             "turn_points": sum(h.points for h in self.turn),
             "checkout": self.checkout_hint(),

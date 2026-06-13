@@ -1008,24 +1008,15 @@ def stream_frames(event_queue):
                                         ev = GAME.record_hit(hit, pos_mm)
                                     print(f"  Dart {len(scored_canonical)}: {hit.label} "
                                           f"({hit.points})  [{candidate_max_n_cams} cams]  {ev['message']}")
-                                    say(hit.label)
                                     if not ev["bust"]:
                                         turn_points += hit.points
-                                    if ev["bust"]:
-                                        say("Bust")
-                                    elif ev["leg_won"] or ev["match_won"]:
-                                        say(ev["message"])
                                     turn_over = ev["turn_over"]
-                                    # Announce the visit total + remaining as soon as
-                                    # the 3rd dart lands (don't wait for the board to be
-                                    # cleared) so you hear what you scored.
                                     if turn_over and not ev["bust"] and not ev["leg_won"] and not ev["match_won"]:
                                         with GAME_LOCK:
                                             rem = GAME.player.score
                                             co  = GAME.checkout_hint()
                                         print(f"  Turn total {turn_points}, requires {rem}"
                                               + (f"  ({' '.join(co)})" if co else ""))
-                                        say(f"Scored {turn_points}. Requires {rem}")
                             elif is_dup:
                                 print(f"    Dropped duplicate — within {CANONICAL_MATCH}px "
                                       f"of an already-scored dart (same dart re-detected)")
@@ -1082,7 +1073,7 @@ def stream_frames(event_queue):
                             co = GAME.checkout_hint()
                             print(f"Up next: {p.name} requires {p.score}"
                                   + (f"  ({' '.join(co)})" if co else ""))
-                            say(f"{p.name}, {p.score}")
+                            pass  # frontend handles next-player announcement
 
             # History saving has been moved to server.py to ensure it saves even if the stream is not actively being viewed.
             game_was_over = GAME.over if GAME else False

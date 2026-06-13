@@ -18,6 +18,79 @@ const makeStats = (players, visits) => () => {
   return s.map((x) => ({ ...x, avg: x.darts ? (3 * x.pts) / x.darts : 0 }))
 }
 
+
+const NUMBER_CALLS = {
+  26: 'Twenty-six.',
+  41: 'Forty-one.',
+  60: 'Sixty.',
+  83: 'Eighty-three.',
+  84: 'Eighty-four.',
+  97: 'Ninety-seven.',
+  112: 'One hundred and twelve.',
+  117: 'One hundred and seventeen.',
+  118: 'One hundred and eighteen.',
+  121: 'One hundred and twenty-one.',
+  124: 'One hundred and twenty-four.',
+  126: 'One hundred and twenty-six.',
+  128: 'One hundred and twenty-eight.',
+  135: 'One hundred and thirty-five.',
+  140: 'One hundred and forty.',
+  141: 'One hundred and forty-one.',
+  149: 'One hundred and forty-nine.',
+  150: 'One hundred and fifty.',
+  157: 'One hundred and fifty-seven.',
+  171: 'One hundred and seventy-one.',
+  177: 'One hundred and seventy-seven.',
+}
+
+const ANNOUNCER = {
+  // Display can be theatrical. TTS absolutely cannot. It will read the extra letters
+  // because apparently machines respect spelling more than showmanship.
+  max180Display: 'Onnnne HUNDRED and EIGHTYYY!',
+  max180Speech: 'One hundred and eighty!',
+  // Optional SSML if the frontend/TTS provider supports it. Google voices usually do.
+  max180Ssml: '<speak><prosody rate="slow" pitch="+2st">One hundred</prosody><break time="120ms"/><prosody rate="slow" pitch="+4st">and eighty</prosody></speak>',
+}
+
+const callForTotal = (total, extra = '') => {
+  if (total === 180) return extra ? `${ANNOUNCER.max180Speech} ${extra}` : ANNOUNCER.max180Speech
+  return NUMBER_CALLS[total] || `${total}.`
+}
+
+const displayCallForTotal = (total, extra = '') => {
+  if (total === 180) return extra ? `${ANNOUNCER.max180Display} ${extra}` : ANNOUNCER.max180Display
+  return callForTotal(total, extra)
+}
+
+const speechCallForTotal = (total, extra = '') => {
+  if (total === 180) return extra ? `${ANNOUNCER.max180Speech} ${extra}` : ANNOUNCER.max180Speech
+  return callForTotal(total, extra)
+}
+
+const max180 = (extra = '') => ({
+  big: '180',
+  // Keep call speech-safe because many components/TTS hooks read visit.call directly.
+  call: speechCallForTotal(180, extra),
+  // Components can render this for the proper shouty TV darts look.
+  displayCall: displayCallForTotal(180, extra),
+  // TTS should prefer this, or ssmlCall if SSML is supported.
+  speechCall: speechCallForTotal(180, extra),
+  ssmlCall: ANNOUNCER.max180Ssml,
+  audioCue: 'one-hundred-and-eighty',
+})
+
+const extract180Extra = (call = '') => call
+  .replace(/^(On+n+e\s+HUNDRED\s+and\s+EIGHTY+!|ONE HUNDRED AND EIGHTY!|One hundred and eighty!)/i, '')
+  .trim()
+
+// Safety net: imported or future scripts cannot accidentally make Google voice read stretched text.
+const normaliseScript = (script) => ({
+  ...script,
+  VISITS: script.VISITS.map((visit) => (
+    visit.total === 180 ? { ...visit, ...max180(extract180Extra(visit.displayCall || visit.call)) } : visit
+  )),
+})
+
 // ── 0: Original — Marcus Bell vs Kai Tanaka ─────────────────────────────────
 const script0 = { MATCH: M0, PLAYERS: P0, VISITS: V0, matchStats: ms0 }
 
@@ -49,7 +122,7 @@ const V1 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -2.5, 0), rot: -46 },
       { label: 'T20', score: 60, pos: at(20, 103, 1, 2), rot: -43 },
@@ -65,7 +138,7 @@ const V1 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, 1.5, -1), rot: -48 },
       { label: 'T20', score: 60, pos: at(20, 103, -3, 1.5), rot: -41 },
@@ -185,7 +258,7 @@ const V3 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -1.5, 0), rot: -46 },
       { label: 'T20', score: 60, pos: at(20, 103, 2, 2),   rot: -43 },
@@ -260,7 +333,7 @@ const V4 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -2, 0),  rot: -46 },
       { label: 'T20', score: 60, pos: at(20, 103, 1.5, 2), rot: -43 },
@@ -276,7 +349,7 @@ const V4 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -1.5, 2), rot: -47 },
       { label: 'T20', score: 60, pos: at(20, 103, 2.5, -1), rot: -44 },
@@ -333,7 +406,7 @@ const V5 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty!',
+    p: 1, total: 180, ...max180(),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -2.5, 1), rot: -45 },
       { label: 'T20', score: 60, pos: at(20, 103, 1, -2),   rot: -42 },
@@ -349,7 +422,7 @@ const V5 = [
     ],
   },
   {
-    p: 1, total: 180, big: '180', call: 'One hundred and eighty! Hartmann is relentless!',
+    p: 1, total: 180, ...max180('Hartmann is relentless!'),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -1, 0),  rot: -44 },
       { label: 'T20', score: 60, pos: at(20, 103, 2.5, 2), rot: -41 },
@@ -357,7 +430,7 @@ const V5 = [
     ],
   },
   {
-    p: 0, total: 180, big: '180', call: 'ONE HUNDRED AND EIGHTY! CARA VOSS IS ALIVE!',
+    p: 0, total: 180, ...max180('CARA VOSS IS ALIVE!'),
     darts: [
       { label: 'T20', score: 60, pos: at(20, 103, -2, 1.5), rot: -45 },
       { label: 'T20', score: 60, pos: at(20, 103, 3, -2),   rot: -42 },
@@ -387,4 +460,208 @@ const V5 = [
 ]
 const script5 = { MATCH: { startScore: 501, title: 'DARTS.AI CHAMPIONSHIP', subtitle: 'LEG DECIDER · 501 · DOUBLE OUT' }, PLAYERS: P5, VISITS: V5, matchStats: makeStats(P5, V5) }
 
-export const SCRIPTS = [script0, script1, script2, script3, script4, script5]
+
+// ── 6: Max "The Machine" Calder vs Luca "Lucky Seven" Moretti ──────────────
+// Max throws the full TV fantasy: 180, 180, then 141 for a nine-dart finish.
+const P6 = [
+  {
+    name: 'Max Calder', nick: 'The Machine', tag: 'MC',
+    variant: 'robot', color: '#38bdf8', cardBg: '#0f172a',
+    accessories: ['darts', 'cog', 'trophy'],
+    bio: 'Career average 112.6 · 63 ranking titles · Appears to have been assembled in a tungsten laboratory',
+    announce: 'Walking in like the final boss of darts... Max, The Machine, Calder!',
+  },
+  {
+    name: 'Luca Moretti', nick: 'Lucky Seven', tag: 'LM',
+    variant: 'showman', color: '#facc15', cardBg: '#422006',
+    accessories: ['darts', 'dice', 'trophy'],
+    bio: 'Career average 92.9 · 10 ranking titles · The king of impossible escapes',
+    announce: 'And trying to stop the machine... Luca, Lucky Seven, Moretti!',
+  },
+]
+const V6 = [
+  {
+    p: 0, total: 180, ...max180(),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -2, 0),   rot: -46 },
+      { label: 'T20', score: 60, pos: at(20, 103, 1.5, 2),  rot: -43 },
+      { label: 'T20', score: 60, pos: at(20, 103, 3, -1.5), rot: -40 },
+    ],
+  },
+  {
+    p: 1, total: 97, call: callForTotal(97),
+    darts: [
+      { label: 'T19', score: 57, pos: at(19, 103, -2, 1), rot: -51 },
+      { label: 'S20', score: 20, pos: at(20, 128, 3, 0),  rot: -36 },
+      { label: 'S20', score: 20, pos: at(20, 128, 0, 2),  rot: -38 },
+    ],
+  },
+  {
+    p: 0, total: 180, ...max180('He is on for the perfect leg!'),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -1.5, 2), rot: -47 },
+      { label: 'T20', score: 60, pos: at(20, 103, 2.5, -1), rot: -44 },
+      { label: 'T20', score: 60, pos: at(20, 103, 0.5, 3),  rot: -41 },
+    ],
+  },
+  {
+    p: 1, total: 140, call: callForTotal(140),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -2, 1), rot: -45 },
+      { label: 'T20', score: 60, pos: at(20, 103, 2, -2), rot: -42 },
+      { label: 'S20', score: 20, pos: at(20, 128, 5, 0),  rot: -37 },
+    ],
+  },
+  {
+    p: 0, total: 141, gameShot: true,
+    hint: '141 · T20 → T19 → D12',
+    requireCall: 'Max Calder, one hundred and forty-one for the nine-darter.',
+    call: 'Game shot! Nine-dart finish! Max, The Machine, Calder!',
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, 1, -1),   rot: -46 },
+      { label: 'T19', score: 57, pos: at(19, 103, -1.5, 1), rot: -51 },
+      { label: 'D12', score: 24, pos: at(12, 166, 0.5, 0),  rot: -39, win: true },
+    ],
+  },
+]
+const script6 = { MATCH: { startScore: 501, title: 'DARTS.AI PERFECT LEG', subtitle: 'NINE-DART SPECIAL · 501 · DOUBLE OUT' }, PLAYERS: P6, VISITS: V6, matchStats: makeStats(P6, V6) }
+
+// ── 7: Gary "Two Pints" Wilkins vs Mo "The Spreadsheet" Patel ──────────────
+// Pub chaos. Bad darts, worse decisions, then one stupidly good checkout.
+const P7 = [
+  {
+    name: 'Gary Wilkins', nick: 'Two Pints', tag: 'GW',
+    variant: 'pubguy', color: '#fb923c', cardBg: '#431407',
+    accessories: ['darts', 'pint', 'horseshoe'],
+    bio: 'Career average 39.8 · Local league regular · Calls every miss a marker',
+    announce: 'From table eight, carrying questionable confidence... Gary, Two Pints, Wilkins!',
+  },
+  {
+    name: 'Mo Patel', nick: 'The Spreadsheet', tag: 'MP',
+    variant: 'posh', color: '#60a5fa', cardBg: '#1e3a8a',
+    accessories: ['darts', 'cog', 'trophy'],
+    bio: 'Career average 71.2 · Calculates checkouts nobody asked for',
+    announce: 'And the man with conditional formatting in his soul... Mo, The Spreadsheet, Patel!',
+  },
+]
+const V7 = [
+  {
+    p: 0, total: 26, call: 'Twenty-six. The traditional breakfast.',
+    darts: [
+      { label: 'S20', score: 20, pos: at(20, 128, -1, 2), rot: -38 },
+      { label: 'S5',  score: 5,  pos: at(5, 128, 3, 1),   rot: -29, drama: 'FIVE! HE WENT SEARCHING FOR TWENTY AND FOUND PUB HISTORY!' },
+      { label: 'S1',  score: 1,  pos: at(1, 128, -2, 0),  rot: -34 },
+    ],
+  },
+  {
+    p: 1, total: 41, call: callForTotal(41),
+    darts: [
+      { label: 'S20', score: 20, pos: at(20, 128, 2, 1),  rot: -38 },
+      { label: 'S20', score: 20, pos: at(20, 128, -3, 0), rot: -36 },
+      { label: 'S1',  score: 1,  pos: at(1, 128, 2, -1),  rot: -33, drama: 'THE SPREADSHEET HAS A FORMULA ERROR!' },
+    ],
+  },
+  {
+    p: 0, total: 7, call: 'Seven. The less said, the better.',
+    darts: [
+      { label: 'S1', score: 1, pos: at(1, 128, -2, 0), rot: -34 },
+      { label: 'S5', score: 5, pos: at(5, 128, 2, 1),  rot: -30 },
+      { label: 'S1', score: 1, pos: at(1, 128, 3, 0),  rot: -35, drama: 'HE HAS SPLIT THE ONES WITH SURGICAL PANIC!' },
+    ],
+  },
+  {
+    p: 1, total: 112, gameShot: true,
+    hint: '112 · T20 → S20 → D16',
+    requireCall: 'Mo Patel, one hundred and twelve. Surely not.',
+    call: 'Game shot! One hundred and twelve! Nobody understands what just happened!',
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -1, 1), rot: -45 },
+      { label: 'S20', score: 20, pos: at(20, 128, 2, 0),  rot: -37 },
+      { label: 'D16', score: 32, pos: at(16, 166, 0, 0),  rot: -43, win: true },
+    ],
+  },
+]
+const script7 = { MATCH: { startScore: 186, title: 'DARTS.AI PUB CHAOS', subtitle: 'EXHIBITION LEG · QUESTIONABLE DECISIONS' }, PLAYERS: P7, VISITS: V7, matchStats: makeStats(P7, V7) }
+
+// ── 8: Nina "Nightshift" Blake vs Oscar "The Hammer" Holt ──────────────────
+// Oscar dominates early. Nina storms back with back-to-back 180s and a 121 checkout.
+const P8 = [
+  {
+    name: 'Nina Blake', nick: 'Nightshift', tag: 'NB',
+    variant: 'cyberpunk', color: '#a3e635', cardBg: '#1a2e05',
+    accessories: ['darts', 'shuriken', 'trophy'],
+    bio: 'Career average 98.1 · 18 ranking titles · Plays best when everyone else is panicking',
+    announce: 'The late-night specialist... Nina, Nightshift, Blake!',
+  },
+  {
+    name: 'Oscar Holt', nick: 'The Hammer', tag: 'OH',
+    variant: 'viking', color: '#f87171', cardBg: '#450a0a',
+    accessories: ['darts', 'axe', 'trophy'],
+    bio: 'Career average 99.4 · 21 ranking titles · Heavy scoring, heavier stare',
+    announce: 'And bringing the blunt-force tungsten... Oscar, The Hammer, Holt!',
+  },
+]
+const V8 = [
+  {
+    p: 0, total: 60, call: 'Sixty. Nina Blake still warming up.',
+    darts: [
+      { label: 'S20', score: 20, pos: at(20, 128, -2, 1), rot: -38 },
+      { label: 'S20', score: 20, pos: at(20, 128, 3, 0),  rot: -35 },
+      { label: 'S20', score: 20, pos: at(20, 128, 0, 3),  rot: -40 },
+    ],
+  },
+  {
+    p: 1, total: 180, ...max180('Oscar Holt is trying to end this early!'),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -2, 0), rot: -46 },
+      { label: 'T20', score: 60, pos: at(20, 103, 2, 2),  rot: -43 },
+      { label: 'T20', score: 60, pos: at(20, 103, 0, -2), rot: -40 },
+    ],
+  },
+  {
+    p: 0, total: 180, ...max180('Nina Blake has found another gear!'),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -2.5, 1), rot: -45 },
+      { label: 'T20', score: 60, pos: at(20, 103, 1, -2),   rot: -42 },
+      { label: 'T20', score: 60, pos: at(20, 103, 3, 1.5),  rot: -47 },
+    ],
+  },
+  {
+    p: 1, total: 140, call: 'One hundred and forty. Oscar leaves eighty-one.',
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -2, 1), rot: -45 },
+      { label: 'T20', score: 60, pos: at(20, 103, 2, -2), rot: -42 },
+      { label: 'S20', score: 20, pos: at(20, 128, 5, 0),  rot: -37 },
+    ],
+  },
+  {
+    p: 0, total: 180, ...max180('This is getting ridiculous!'),
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, -1, 0), rot: -44 },
+      { label: 'T20', score: 60, pos: at(20, 103, 2, 2),  rot: -41 },
+      { label: 'T20', score: 60, pos: at(20, 103, 0, -3), rot: -48 },
+    ],
+  },
+  {
+    p: 1, total: 45, call: 'Forty-five. The Hammer has gone soft at the worst possible moment.',
+    darts: [
+      { label: 'S20', score: 20, pos: at(20, 128, 1, 0), rot: -37 },
+      { label: 'S5',  score: 5,  pos: at(5, 128, 2, 1),   rot: -31, drama: 'INTO THE FIVE! THE DOOR IS OPEN!' },
+      { label: 'S20', score: 20, pos: at(20, 128, -3, 0), rot: -38 },
+    ],
+  },
+  {
+    p: 0, total: 121, gameShot: true,
+    hint: '121 · T20 → T11 → D14',
+    requireCall: 'Nina Blake, one hundred and twenty-one for the match.',
+    call: 'Game shot! One hundred and twenty-one! Nina, Nightshift, Blake completes the comeback!',
+    darts: [
+      { label: 'T20', score: 60, pos: at(20, 103, 1, -1),   rot: -46 },
+      { label: 'T11', score: 33, pos: at(11, 103, -1, 2),   rot: -42 },
+      { label: 'D14', score: 28, pos: at(14, 166, 0.5, 0),  rot: -39, win: true },
+    ],
+  },
+]
+const script8 = { MATCH: { startScore: 501, title: 'DARTS.AI COMEBACK NIGHT', subtitle: 'FINAL LEG · 501 · DOUBLE OUT' }, PLAYERS: P8, VISITS: V8, matchStats: makeStats(P8, V8) }
+
+export const SCRIPTS = [script0, script1, script2, script3, script4, script5, script6, script7, script8].map(normaliseScript)

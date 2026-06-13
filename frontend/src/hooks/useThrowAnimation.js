@@ -16,6 +16,13 @@ export function useThrowAnimation() {
     return clearTimers;
   }, [clearTimers]);
 
+  const triggerWalkOn = useCallback(() => {
+    clearTimers()
+    setAnimState(ThrowState.WALKING)
+    const t = setTimeout(() => setAnimState(ThrowState.IDLE), TIMING.WALK_ON_DURATION)
+    timerRefs.current.push(t)
+  }, [clearTimers])
+
   const triggerThrow = useCallback(({ dartResult, event = null, onScored }) => {
     clearTimers();
     setCurrentDart(dartResult);
@@ -75,6 +82,7 @@ export function useThrowAnimation() {
   return {
     animState,
     currentDart,
-    triggerThrow
+    triggerThrow,
+    triggerWalkOn,
   };
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Settings, LineChart, Target, Camera, Crosshair,
   Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star,
@@ -12,14 +12,38 @@ import AvatarPicker from './components/AvatarPicker'
 import OcheCam from './components/OcheCam'
 import Caricature from './art/Caricature'
 import { useThrowAnimation } from './hooks/useThrowAnimation'
+import { ThrowState } from './config/timing'
 import CinematicDemo from './cinematic/CinematicDemo'
-import { unlockAudio } from './cinematic/audio'
+import { unlockAudio, sound } from './cinematic/audio'
 import { SCRIPTS } from './cinematic/scripts'
 import { getAvatar } from './config/avatars'
 
 const API_URL = 'http://localhost:8000/api'
 const WS_URL = 'ws://localhost:8000/ws/game'
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+function scoreToWords(n) {
+  if (n === 180) return 'One hundred and eighty!'
+  const ones = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+    'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+  const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+  if (n === 0) return 'zero'
+  if (n < 20) return ones[n]
+  if (n < 100) { const t = Math.floor(n / 10), o = n % 10; return o ? `${tens[t]}-${ones[o]}` : tens[t] }
+  const rem = n - 100
+  if (rem === 0) return 'One hundred'
+  if (rem < 20) return `One hundred and ${ones[rem]}`
+  const t = Math.floor(rem / 10), o = rem % 10
+  return `One hundred and ${o ? `${tens[t]}-${ones[o]}` : tens[t]}`
+}
+
+function visitTotalToSpeech(total, { bust = false, legWon = false } = {}) {
+  if (bust) return 'No score!'
+  const words = scoreToWords(total)
+  const cap = words.charAt(0).toUpperCase() + words.slice(1)
+  if (legWon) return `Game shot! ${total === 180 ? cap : cap + '!'}`
+  return total === 180 ? cap : `${cap}.`
+}
 
 // ── Live game state via WebSocket push (auto-reconnecting) ──────────────────
 function useGame() {
@@ -119,6 +143,7 @@ function GameSetup({ onStarted }) {
   const removePlayer = (i) => players.length > 1 && setPlayers(players.filter((_, j) => j !== i))
 
   const start = async () => {
+    unlockAudio()
     setBusy(true)
     try {
       const playerConfigs = players.map(p => ({
@@ -442,8 +467,9 @@ function AlignButtons() {
   )
 }
 
-function CorrectionBoard({ game, onRefresh, isLarge, ocheCam }) {
+function CorrectionBoard({ game, onRefresh, isLarge, boardDarts, ocheCam }) {
   const [armed, setArmed] = useState(false)
+  const darts = boardDarts ?? game?.turn ?? []
   if (!hasGame(game)) {
     return (
       <div className={`rounded-xl bg-black/30 border border-white/10 p-4 space-y-3 relative ${isLarge ? 'h-full flex flex-col' : ''}`}>
@@ -488,7 +514,7 @@ function CorrectionBoard({ game, onRefresh, isLarge, ocheCam }) {
         </button>
       </div>
       <div className={isLarge ? 'flex-1 min-h-0 flex items-center justify-center relative' : 'relative'}>
-        <DartBoard darts={game.turn} armed={armed} onPick={pick} />
+        <DartBoard darts={darts} armed={armed} onPick={pick} />
       </div>
     </div>
   )
@@ -647,7 +673,8 @@ function App() {
   const [demoScript, setDemoScript] = useState(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  const { animState, triggerThrow } = useThrowAnimation()
+  const { animState, currentDart, triggerThrow, triggerWalkOn } = useThrowAnimation()
+  const pendingAnnouncement = useRef(null)
 
   const launchDemo = useCallback(() => {
     setDemoScript(SCRIPTS[Math.floor(Math.random() * SCRIPTS.length)])
@@ -661,34 +688,97 @@ function App() {
 
   const leader = hasGame(game) ? [...game.players].sort((a, b) => a.score - b.score)[0] : null
 
-  // Custom refresh logic to wait for animation
+  // animatingTurn holds the full set of darts to show on the board during a
+  // throw animation. Cleared in onScored. Needed for the 3rd dart: game.turn
+  // resets to [] synchronously in the backend, so we capture display_turn
+  // (which includes the just-completed visit via _last_visit_turn) before it
+  // disappears from the game state.
+  const [animatingTurn, setAnimatingTurn] = useState(null)
   const [displayedGame, setDisplayedGame] = useState(game)
   const uiGame = displayedGame || game
 
+  // Dart detection via dart_seq (monotonic) rather than turn.length so that
+  // the 3rd dart of a visit is detected even after game.turn has reset to [].
   useEffect(() => {
-    if (!game?.running || !displayedGame?.running) {
-      setTimeout(() => setDisplayedGame(game), 0);
-      return;
+    if (!hasGame(game) || !hasGame(displayedGame)) {
+      setTimeout(() => { setAnimatingTurn(null); setDisplayedGame(game) }, 0)
+      return
     }
-    
-    const prevTurnCount = displayedGame.turn ? displayedGame.turn.length : 0;
-    const nextTurnCount = game.turn ? game.turn.length : 0;
-    
-    // A new dart has arrived!
-    if (nextTurnCount > prevTurnCount) {
-      const newDart = game.turn[nextTurnCount - 1];
-      triggerThrow({
-        dartResult: newDart,
-        mode: 'detected',
-        onScored: () => {
-          setDisplayedGame(game);
+
+    const prevSeq = displayedGame.dart_seq ?? 0
+    const nextSeq = game.dart_seq ?? 0
+
+    if (nextSeq > prevSeq) {
+      // New dart — get it from display_turn (handles the 3rd-dart reset case)
+      const dispTurn = game.display_turn || game.turn || []
+      const newDart = dispTurn[dispTurn.length - 1]
+      // Capture game in a const so the closure below always sees this snapshot
+      const capturedGame = game
+
+      // Compute visit-total announcement when this dart ends the visit.
+      // turn resets to [] in the backend on turn completion, so an empty turn
+      // with a non-empty display_turn means the visit just finished.
+      const turnOver = (capturedGame.turn?.length ?? 1) === 0
+      if (turnOver && dispTurn.length > 0) {
+        const visitTotal = dispTurn.reduce((sum, d) => sum + (d.points || 0), 0)
+        const isBust = capturedGame.message?.includes('BUST') ?? false
+        const isLegWon = capturedGame.message?.includes('wins') ?? false
+        pendingAnnouncement.current = {
+          text: visitTotalToSpeech(visitTotal, { bust: isBust, legWon: isLegWon }),
+          visitTotal,
+          legWon: isLegWon,
         }
-      });
-    } else if (nextTurnCount < prevTurnCount || game.current !== displayedGame.current) {
-      // Turn reset or player changed (e.g. bust, undo, next turn)
-      setTimeout(() => setDisplayedGame(game), 0);
+      } else {
+        pendingAnnouncement.current = null
+      }
+
+      setTimeout(() => {
+        if (!newDart) { setDisplayedGame(capturedGame); return }
+        setAnimatingTurn(dispTurn)
+        triggerThrow({
+          dartResult: newDart,
+          mode: 'detected',
+          onScored: () => {
+            setAnimatingTurn(null)
+            setDisplayedGame(capturedGame)
+          },
+        })
+      }, 0)
+    } else if (nextSeq < prevSeq) {
+      // Undo or game reset
+      setTimeout(() => { setAnimatingTurn(null); setDisplayedGame(game) }, 0)
     }
-  }, [game, triggerThrow, displayedGame]);
+    // Player changes are handled automatically via setDisplayedGame(game) in onScored
+  }, [game, triggerThrow, displayedGame])
+
+  // Walk-on animation when the active player changes (fires after onScored updates displayedGame)
+  const prevPlayerRef = useRef(-1)
+  useEffect(() => {
+    if (!hasGame(displayedGame) || displayedGame.over) { prevPlayerRef.current = -1; return }
+    if (prevPlayerRef.current !== displayedGame.current) {
+      prevPlayerRef.current = displayedGame.current
+      triggerWalkOn()
+    }
+  }, [displayedGame, triggerWalkOn])
+
+  // Sound effects tied to the throw animation lifecycle
+  useEffect(() => {
+    if (animState === ThrowState.THROWING) {
+      sound.whoosh()
+    } else if (animState === ThrowState.IMPACT) {
+      sound.thud()
+    } else if (animState === ThrowState.SCORING && currentDart) {
+      const ann = pendingAnnouncement.current
+      if (ann) {
+        pendingAnnouncement.current = null
+        if (ann.legWon) sound.cheer(true)
+        else if (ann.visitTotal >= 100) sound.cheer(false)
+        sound.say(ann.text, { rate: ann.legWon ? 0.85 : 0.9, pitch: ann.legWon ? 1.05 : 1.0 })
+      }
+    } else if (animState === ThrowState.CELEBRATING) {
+      sound.cheer(true)
+    }
+  }, [animState, currentDart])
 
   const refresh = async () => {}
 
@@ -787,10 +877,11 @@ function App() {
           {activeTab === 'Live Track' && (
             <div className="h-full grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6">
               <div className="flex flex-col gap-3 min-h-0">
-                <CorrectionBoard 
-                  game={uiGame} 
-                  onRefresh={refresh} 
-                  isLarge 
+                <CorrectionBoard
+                  game={uiGame}
+                  onRefresh={refresh}
+                  isLarge
+                  boardDarts={animatingTurn ?? uiGame?.turn}
                   ocheCam={<OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />}
                 />
               </div>
