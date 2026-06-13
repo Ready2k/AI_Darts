@@ -35,6 +35,7 @@ Icon
 # Darts App specifics
 darts.log
 debug_snapshots/
+debug_recordings/
 *.npz
 *.bak
 

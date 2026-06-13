@@ -21,6 +21,7 @@ import numpy as np
 import dartboard
 import game
 import history
+from debug_recorder import recorder as dbg
 
 CAMERAS = [0, 1, 2]
 LABELS  = {0: "Darts Cam 0", 1: "Darts Cam 1", 2: "Darts Cam 2"}
@@ -37,6 +38,7 @@ GAME_CONFIG = {
     "double_out":  True,
     "legs_to_win": 3,
     "sets_to_win": 1,
+    "debug":       False,    # record this match for debugging (video + telemetry)
 }
 
 
@@ -56,6 +58,35 @@ def new_game(**overrides):
             sets_to_win=GAME_CONFIG["sets_to_win"],
         )
     STATUS["game_gen"] += 1
+    # Start a fresh debug recording for the new match (or stop any running one).
+    if GAME_CONFIG.get("debug"):
+        names = [p["name"] if isinstance(p, dict) else str(p)
+                 for p in GAME_CONFIG["players"]]
+        dbg.start(meta={
+            "players": names,
+            "start_score": GAME_CONFIG["start_score"],
+            "double_in": GAME_CONFIG["double_in"],
+            "double_out": GAME_CONFIG["double_out"],
+            "legs_to_win": GAME_CONFIG["legs_to_win"],
+            "sets_to_win": GAME_CONFIG["sets_to_win"],
+            "tuning": {
+                "DIFF_THRESH": DIFF_THRESH, "MIN_DART_AREA": MIN_DART_AREA,
+                "MAX_DART_AREA": MAX_DART_AREA, "MIN_CAMS_TO_TRIGGER": MIN_CAMS_TO_TRIGGER,
+                "CONFIRM_FRAMES": CONFIRM_FRAMES,
+                "CONFIRM_CONSENSUS_FRAMES": CONFIRM_CONSENSUS_FRAMES,
+                "CONFIRM_MIN_CAMS": CONFIRM_MIN_CAMS,
+                "PENDING_GRACE_FRAMES": PENDING_GRACE_FRAMES,
+                "CANONICAL_CLUSTER": CANONICAL_CLUSTER, "CANONICAL_JUMP": CANONICAL_JUMP,
+                "CLUSTER_TIGHT": CLUSTER_TIGHT, "CLUSTER_TIGHT_3CAM": CLUSTER_TIGHT_3CAM,
+                "FG_SETTLE_DELTA": FG_SETTLE_DELTA, "FG_STABLE_FRAMES": FG_STABLE_FRAMES,
+                "MAX_SCORE_CONTOURS": MAX_SCORE_CONTOURS,
+                "FG_RISE_DELTA": FG_RISE_DELTA, "EMPTY_FG": EMPTY_FG,
+                "CLEAR_FRACTION": CLEAR_FRACTION,
+                "CLEAR_SETTLE_SECS": CLEAR_SETTLE_SECS, "ABSENT_SECS": ABSENT_SECS,
+            },
+        })
+    else:
+        dbg.stop()
     return GAME
 
 
@@ -83,6 +114,9 @@ CANONICAL_RADIUS = 220                   # px for DOUBLE_OUT ring
 STABLE_SECS = 1.0
 # After all 3 scored: board must be clear this long before next turn starts
 ABSENT_SECS = 1.5
+# After the board is cleared, hold detection off this long so the board can
+# stop vibrating from the darts being yanked out (vibration looks like a dart)
+CLEAR_SETTLE_SECS = 1.5
 # Candidate tip may disappear this long (seconds) before we give up on it
 CANDIDATE_GRACE = 0.5
 
@@ -102,8 +136,20 @@ CAM_MIN_ASPECT = {0: 1.6, 1: 1.6, 2: 1.6}
 # small matters: tight grouping (three darts at T20) lands new darts well
 # within 23mm of the previous one, and a large radius rejects them as dupes.
 CANONICAL_MATCH = 12
-# Max px between two cameras' views of the SAME dart — alignment won't be perfect
+# Max px between two cameras' views of the SAME dart — alignment won't be perfect.
+# This is the loose *association* radius used to gather a cluster.
 CANONICAL_CLUSTER = 55
+# A confirmed cluster must also be TIGHT: its members must agree within this many
+# px of the cluster centre. A real tip (all cameras' rays meeting at the board
+# plane) is tight ≈ alignment error; a flight-end or noise coincidence that merely
+# falls inside CANONICAL_CLUSTER is looser and gets rejected. The allowance is
+# camera-count dependent: full 3-camera agreement (strong evidence of a real
+# triangulated tip) tolerates a looser spread, because alignment error grows toward
+# the board edges and real edge darts legitimately spread ~40px; a 2-camera cluster
+# must be tight, since a loose 2-camera match is the flight/noise-phantom signature.
+# Raise CLUSTER_TIGHT_3CAM if real edge darts are dropped; lower if phantoms slip in.
+CLUSTER_TIGHT      = 32   # 2-camera clusters
+CLUSTER_TIGHT_3CAM = 50   # full 3-camera clusters
 # Reset the stable timer only if the smoothed position jumps this far
 CANONICAL_JUMP  = 120
 # Minimum cameras that must agree to trigger stabilising.
@@ -141,6 +187,52 @@ FG_QUIET_ALPHA = 0.05   # EMA rate of the quiet-board baseline
 # baseline before it can be scored.
 POST_SCORE_SETTLE_SECS = 1.2  # seconds of fast settling after each dart scores
 FG_SETTLE_ALPHA        = 0.3  # fast EMA alpha during post-score cooldown
+
+# ── Multi-dart tracker ──────────────────────────────────────────────────────
+# The detector diffs every camera against the EMPTY board and clusters all tips
+# in canonical space, so every dart on the board is localised at once (no
+# one-at-a-time absorb-and-wait). A cluster that is new (not near an
+# already-scored dart) and persists is confirmed and scored. This is cadence
+# independent: three darts thrown in a second are each their own cluster.
+#
+# A new dart must be tracked for this many consecutive frames before it scores
+# (debounce against flicker / a dart in flight). ~0.25s at 30fps.
+CONFIRM_FRAMES = 7
+# …and seen by >= MIN_CAMS_TO_TRIGGER cameras on at least this many of them.
+CONFIRM_CONSENSUS_FRAMES = 4
+# A pending candidate may go unseen this many frames before we forget it.
+PENDING_GRACE_FRAMES = 5
+# A confirmed dart must have been seen TIGHTLY by at least this many cameras at
+# some point (capped at the number of cameras present). Set to 2 (not 3): on this
+# rig one camera intermittently fails to detect a dart that is plainly visible, so
+# requiring full 3-camera agreement silently dropped real darts. Two cameras is
+# enough to triangulate the tip; flight-end / edge phantoms are held back instead
+# by the tightness, current-support (cur_cams) and CONSECUTIVE-consensus gates
+# (every phantom observed flickered, so a consecutive multi-camera streak rejects
+# them). Raise back to 3 if alignment/detection improve enough that real darts are
+# reliably seen by all three.
+CONFIRM_MIN_CAMS = 2
+# Anti-phantom: a dart is only committed once the scene has SETTLED — i.e. the
+# total foreground stopped changing, meaning the dart has landed and the arm /
+# motion is gone. Confirming during motion is how a transient blob (e.g. an
+# incoming dart's flight or arm wash) gets scored as a phantom. The frame-to-frame
+# fg change must stay under FG_SETTLE_DELTA for FG_STABLE_FRAMES frames.
+FG_SETTLE_DELTA  = 1500
+FG_STABLE_FRAMES = 3
+# Anti-phantom (contamination gate): a settled board shows only a SMALL number of
+# blobs per camera — roughly one per dart present. A hand/arm reaching in to throw
+# or retrieve shatters into many contours (observed: 24 in one camera at the moment
+# a phantom "Double 14" was scored). The frame-to-frame fg-settle test above is
+# fooled by an arm held momentarily still (high fg, low delta → "settled"), so we
+# ALSO refuse to commit a score on any frame where any camera sees more than this
+# many blobs. The pending persists across the contamination and scores once the arm
+# is clear, so a real dart is only delayed, never lost.
+MAX_SCORE_CONTOURS = 6
+# Board-clear: a visit's darts read some "darts-in" fg level. The board is judged
+# clear once fg drops below this fraction of that level (robust to lighting drift
+# and, unlike a drop-from-peak test, NOT fooled by the arm briefly spiking fg high
+# then withdrawing while the darts are still in the board).
+CLEAR_FRACTION = 0.4
 
 
 
@@ -448,6 +540,70 @@ def find_consensus_tip(all_tips_by_cam, homographies, scored_canonical):
     return avg_c, best_cams
 
 
+def find_consensus_tips(all_tips_by_cam, homographies, min_cams=1):
+    """Multi-dart consensus: cluster all cameras' tips into one cluster PER dart.
+
+    Unlike find_consensus_tip (singular), this localises every dart on the board
+    at once, so darts thrown in quick succession don't have to be processed one
+    at a time. Every endpoint from every camera is projected to canonical space;
+    clusters are formed greedily, densest first, each holding at most one tip per
+    camera (the nearest to the seed). A dart's flight end sits ~10cm above the
+    board, so it projects to inconsistent canonical coords across cameras and
+    fails to cluster — only the true tips (z=0) form multi-camera clusters.
+
+    Returns a list of (avg_canonical, cam_set), strongest (most cameras) first,
+    filtered to clusters seen by >= min_cams cameras.
+    """
+    candidates = []   # (canonical_pt, cam_idx, weight)
+    for cam_idx, tips in all_tips_by_cam.items():
+        if cam_idx not in homographies:
+            continue
+        for tip, weight in tips:
+            c = to_canonical(tip, cam_idx, homographies)
+            if c is not None:
+                candidates.append((c, cam_idx, weight))
+
+    used     = [False] * len(candidates)
+    clusters = []
+    while not all(used):
+        best_members, best_cams = None, set()
+        for i, (ci, cam_i, _wi) in enumerate(candidates):
+            if used[i]:
+                continue
+            cams    = {cam_i}
+            members = [i]
+            nearest = {}   # other cam -> (dist, idx)
+            for j, (cj, cam_j, _wj) in enumerate(candidates):
+                if used[j] or j == i or cam_j == cam_i:
+                    continue
+                d = math.hypot(ci[0] - cj[0], ci[1] - cj[1])
+                if d < CANONICAL_CLUSTER and (cam_j not in nearest or d < nearest[cam_j][0]):
+                    nearest[cam_j] = (d, j)
+            for cam_j, (_d, j) in nearest.items():
+                members.append(j)
+                cams.add(cam_j)
+            if best_members is None or len(cams) > len(best_cams):
+                best_members, best_cams = members, cams
+        if best_members is None:
+            break
+        for idx in best_members:
+            used[idx] = True
+        pts  = [(candidates[idx][0], candidates[idx][2]) for idx in best_members]
+        wsum = sum(w * w for _, w in pts) or 1.0
+        avg  = (sum(p[0] * w * w for p, w in pts) / wsum,
+                sum(p[1] * w * w for p, w in pts) / wsum)
+        # Spread = how far the farthest member sits from the cluster centre. A real
+        # tip is where every camera's ray meets the board plane, so members agree
+        # tightly (≈ alignment error); a flight-end / noise coincidence that merely
+        # falls within the loose association radius is geometrically loose.
+        spread = max((math.hypot(p[0] - avg[0], p[1] - avg[1]) for p, _ in pts),
+                     default=0.0)
+        clusters.append((avg, best_cams, spread))
+
+    clusters = [c for c in clusters if len(c[1]) >= min_cams]
+    clusters.sort(key=lambda c: (-len(c[1]), c[2]))   # most cameras, then tightest
+    return clusters
+
 
 # ── Overlay drawing ────────────────────────────────────────────────────────────
 
@@ -509,7 +665,7 @@ def draw_tile(frame, background, roi, cam_idx, scored_tips=None, is_candidate_ca
     cv2.putText(tile, label,  (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6,  (0, 255, 0), 2)
     cv2.putText(tile, status, (8, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, s_col,       1)
 
-    return tile, all_tips, fg_area
+    return tile, all_tips, fg_area, darts
 
 
 # ── Canonical coordinate helpers ──────────────────────────────────────────────
@@ -720,29 +876,102 @@ def _setup_logging():
     _sys.stdout = _Tee(_sys.__stdout__, f)
 
 
-_detect_session = 0   # bumped on every new detection stream; only the latest runs
-_cameras_free = threading.Event()   # set while no session is holding the cameras
+_cameras_free = threading.Event()   # set while no worker is holding the cameras
 _cameras_free.set()
 
+# ── Persistent detection worker ────────────────────────────────────────────
+# Detection runs in a background thread that owns the cameras and the scoring
+# state machine, independent of whether anyone is viewing the MJPEG stream. The
+# stream endpoint just serves the latest annotated frame. This means:
+#   • the background is captured ONCE per worker start — no re-capture (and no
+#     "board not empty" poisoning) when the Live Track tab remounts or you switch
+#     tabs mid-throw, and
+#   • darts keep being detected while you're on the Dashboard / cinematic view.
+# Cameras are an exclusive resource shared with the Align/Cameras tabs, so those
+# call stop_detection() to take the hardware; detection restarts when Live Track
+# is opened again.
+DETECT_EVENTS  = []                     # web input events (keydown, etc.)
+_latest_jpeg   = None                   # most recent annotated frame (JPEG bytes)
+_latest_lock   = threading.Lock()
+_worker_thread = None
+_worker_stop   = threading.Event()      # set to ask the worker loop to exit
+_worker_lock   = threading.Lock()       # guards start/stop
 
-def stream_frames(event_queue):
-    # Single-active guard: opening the stream again (StrictMode remount, rapid
-    # Start/Stop, a stray client) must not leave two loops scoring the same dart.
-    # The newest session wins; any older loop sees the bump and exits, releasing
-    # its cameras.
-    global _detect_session
-    _detect_session += 1
-    my_session = _detect_session
-    print(f"Starting dart detection stream (session {my_session})...")
 
-    # Wait for any previous session to fully release the USB cameras before we
-    # open them. Opening a still-busy device yields a reader that never produces
-    # frames, which used to stall background capture forever ("not finding
-    # cameras"). The previous holder sets _cameras_free in its finally block.
+def _publish_jpeg(data):
+    global _latest_jpeg
+    with _latest_lock:
+        _latest_jpeg = data
+
+
+def _publish(display):
+    """Record (if debugging) and store an annotated BGR frame for the stream."""
+    dbg.frame(display)
+    ok, buf = cv2.imencode('.jpg', display, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    if ok:
+        _publish_jpeg(buf.tobytes())
+
+
+def detection_running():
+    return _worker_thread is not None and _worker_thread.is_alive()
+
+
+def start_detection():
+    """Start the background detection worker if it isn't already running."""
+    global _worker_thread
+    with _worker_lock:
+        if _worker_thread is not None and _worker_thread.is_alive():
+            return
+        _worker_stop.clear()
+        _worker_thread = threading.Thread(
+            target=_run_detection, args=(DETECT_EVENTS,), daemon=True)
+        _worker_thread.start()
+
+
+def stop_detection():
+    """Stop the detection worker and wait for it to release the cameras."""
+    global _worker_thread
+    with _worker_lock:
+        t = _worker_thread
+        _worker_thread = None
+    if t is not None and t.is_alive():
+        _worker_stop.set()
+        t.join(timeout=10)
+
+
+def stream_frames(event_queue=None):
+    """Thin MJPEG generator: ensure detection is running and serve its frames.
+
+    Does NOT own the cameras or stop the worker on disconnect — closing the
+    browser tab just detaches this viewer; the detection worker keeps running.
+    """
+    start_detection()
+    blank = None
+    while True:
+        with _latest_lock:
+            data = _latest_jpeg
+        if data is None:
+            if blank is None:
+                img = np.zeros((TILE_H, TILE_W, 3), dtype=np.uint8)
+                cv2.putText(img, "Starting detection...", (40, TILE_H // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (180, 180, 180), 2)
+                ok, b = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                blank = b.tobytes() if ok else b""
+            data = blank
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + data + b'\r\n')
+        time.sleep(0.03)
+
+
+def _run_detection(event_queue):
+    # The worker owns the cameras for its whole lifetime. Wait for any previous
+    # holder (a just-stopped worker, or an Align/Cameras stream) to release the
+    # USB devices first — opening a still-busy device yields a reader that never
+    # produces frames.
+    print("Starting dart detection worker...")
     if not _cameras_free.wait(timeout=8):
-        print(f"Session {my_session}: timed out waiting for previous camera release — opening anyway.")
-    if my_session != _detect_session:
-        print(f"Session {my_session} superseded before opening cameras — exiting.")
+        print("Detection worker: timed out waiting for camera release — opening anyway.")
+    if _worker_stop.is_set():
+        print("Detection worker stopped before opening cameras — exiting.")
         return
     _cameras_free.clear()
 
@@ -759,10 +988,9 @@ def stream_frames(event_queue):
                         cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 220, 255), 3)
             cv2.putText(msg_img, label, (60, TILE_H),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (180, 180, 180), 2)
-            ret, buf = cv2.imencode('.jpg', msg_img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-            if ret:
-                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
-                       + buf.tobytes() + b'\r\n')
+            ok, buf = cv2.imencode('.jpg', msg_img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            if ok:
+                _publish_jpeg(buf.tobytes())
             time.sleep(0.12)
 
     homographies = load_alignment()
@@ -783,10 +1011,18 @@ def stream_frames(event_queue):
         print("No cameras delivered frames — aborting detection stream.")
         _cameras_free.set()
         return
-    # Per-dart detection references: start equal to the empty board, then have
-    # each scored dart absorbed into them so the next dart is the only diff.
+    # Contour detection diffs against the empty board (`bg_detect`, tracked from
+    # the lighting-healed `backgrounds`). All darts on the board are visible at
+    # once — flight-end / contamination phantoms are filtered downstream by the
+    # tightness + full-camera-agreement + consecutive-consensus gates, not by
+    # absorbing darts into the reference (that created detection blind spots
+    # around already-scored darts, so a nearby dart was seen by too few cameras).
     bg_detect = {i: b.copy() for i, b in backgrounds.items()}
-    bg_refresh_pending = False
+
+    # Snapshot the inputs needed to replay this match offline (see replay.py): the
+    # homographies it ran with and the empty-board backgrounds it subtracts against.
+    dbg.snapshot_file("alignment.json")
+    dbg.save_arrays("backgrounds.npz", backgrounds)
 
     # After capture, check if something is already in the board (dart thrown too
     # early). High fg means the background includes the dart — warn visually.
@@ -807,10 +1043,9 @@ def stream_frames(event_queue):
                         cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 60, 255), 3)
             cv2.putText(warn_img, "Press R to recapture background", (40, TILE_H + 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 180, 255), 2)
-            ret, buf = cv2.imencode('.jpg', warn_img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-            if ret:
-                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
-                       + buf.tobytes() + b'\r\n')
+            ok, buf = cv2.imencode('.jpg', warn_img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            if ok:
+                _publish_jpeg(buf.tobytes())
             time.sleep(0.1)
 
     bull_path = Path("bull_reference.json")
@@ -828,28 +1063,32 @@ def stream_frames(event_queue):
           f"({'double-out' if GAME_CONFIG['double_out'] else 'straight-out'}) "
           f"— players: {', '.join(_names)}")
 
-    dart_state                = "watching"
-    scored_canonical          = []
-    candidate_canonical       = None
-    candidate_n_cams          = 0
-    candidate_max_n_cams      = 0
-    candidate_absent_since    = None
+    dart_state                = "watching"   # "watching" (tracking) or "all_done"
+    scored_canonical          = []           # confirmed dart positions this visit
+    pendings                  = []           # candidate darts being confirmed; each:
+                                             #   {pos, seen, consensus, absent, max_cams}
     last_seen                 = 0.0
     empty_frames              = 0
     game_was_over             = False
     turn_points               = 0
     last_alldone_log          = 0.0
+    last_loose_log            = 0.0     # throttle "rejected loose cluster" logging
     fg_quiet                  = None    # slow baseline of the foreground level
     last_arrival              = 0.0     # when fg last arose (a dart landed)
     last_fg_log               = 0.0
-    post_score_cooldown_until = 0.0     # end of fast-settle window after each score
-    fg_all_done_peak          = 0       # peak fg seen during current all_done phase
+    clear_settle_until        = 0.0     # end of post-clear settle (board stops vibrating)
+    fg_prev                   = None    # previous frame's max_fg (scene-settle test)
+    fg_stable_frames          = 0       # consecutive frames with little fg change
+    fg_darts_in               = 0       # fg level with this visit's darts in the board
     known_game_gen            = STATUS["game_gen"]   # detect API-triggered game changes
+    # How many cameras must tightly agree to confirm a dart (full agreement when
+    # 3 cameras are present; degrades to whatever is available with fewer).
+    confirm_min_cams          = min(CONFIRM_MIN_CAMS, len(readers))
 
     try:
         while True:
-            if my_session != _detect_session:
-                print(f"Detection session {my_session} superseded — exiting.")
+            if _worker_stop.is_set():
+                print("Detection worker stopping — releasing cameras.")
                 break
 
             # If the game was replaced or ended via the API, flush all per-turn
@@ -857,24 +1096,19 @@ def stream_frames(event_queue):
             if STATUS["game_gen"] != known_game_gen:
                 known_game_gen         = STATUS["game_gen"]
                 scored_canonical       = []
-                candidate_canonical    = None
-                candidate_n_cams       = 0
-                candidate_max_n_cams   = 0
-                candidate_absent_since = None
-                dart_state                = "watching"
-                turn_points               = 0
-                fg_quiet                  = None   # will re-seed from max_fg this iteration
-                last_arrival              = 0.0
-                post_score_cooldown_until = 0.0
-                fg_all_done_peak          = 0
+                pendings               = []
+                dart_state             = "watching"
+                turn_points            = 0
+                fg_quiet               = None   # will re-seed from max_fg this iteration
+                last_arrival           = 0.0
                 bg_detect = {i: b.copy() for i, b in backgrounds.items()}
-                bg_refresh_pending = False
                 print("Game changed via API — detection state reset.")
 
             tiles           = []
             now             = time.monotonic()
             all_tips_by_cam = {}
             frames_by_cam   = {}
+            darts_by_cam    = {}
             max_fg          = 0
 
             for reader in readers:
@@ -884,15 +1118,24 @@ def stream_frames(event_queue):
                     continue
 
                 frames_by_cam[reader.index] = frame
-                tile, detected_tips, fg = draw_tile(
+                # Detect against bg_detect (scored darts absorbed); measure fg
+                # against the empty board (so it still counts all darts present).
+                tile, detected_tips, fg, darts = draw_tile(
                     frame, bg_detect[reader.index], rois[reader.index],
-                    reader.index, is_candidate_cam=(dart_state == "stabilising"),
+                    reader.index, is_candidate_cam=bool(pendings),
                     empty_background=backgrounds[reader.index],
                 )
                 tiles.append(tile)
                 all_tips_by_cam[reader.index] = detected_tips
+                darts_by_cam[reader.index] = darts
                 max_fg = max(max_fg, fg)
 
+            # Persist the raw camera inputs (throttled) for offline replay/debugging.
+            dbg.raw_frames(frames_by_cam)
+
+            if dart_state != STATUS["phase"]:
+                dbg.event("phase", to=dart_state, frm=STATUS["phase"],
+                          max_fg=int(max_fg))
             STATUS["phase"] = dart_state
             STATUS["awaiting_clear"] = (dart_state == "all_done")
 
@@ -902,246 +1145,302 @@ def stream_frames(event_queue):
             arrived = max_fg > fg_quiet + FG_RISE_DELTA
             if arrived:
                 last_arrival = now
-            # Advance the quiet baseline:
-            # • Empty board while watching: slow EMA back to empty level.
-            # • Post-score cooldown: fast EMA so fg_quiet tracks the arm withdrawing
-            #   and settles at the dart-in-board level.  Once it settles, the next
-            #   real dart needs to push fg above the NEW (dart-in-board) baseline,
-            #   which closes the arrival gate between consecutive darts.
-            # • Otherwise (darts in board, outside cooldown): no update — we don't
-            #   want the baseline to creep up and mask the third dart.
+
+            # Scene-settle: has the foreground stopped changing? A dart is only
+            # committed while settled, so a transient blob during motion (incoming
+            # dart / arm) can't confirm as a phantom.
+            if fg_prev is None:
+                fg_prev = max_fg
+            if abs(max_fg - fg_prev) < FG_SETTLE_DELTA:
+                fg_stable_frames += 1
+            else:
+                fg_stable_frames = 0
+            fg_prev = max_fg
+            scene_settled = fg_stable_frames >= FG_STABLE_FRAMES
+            # Only drift the quiet baseline up while the board is empty; once any
+            # dart is in the board, freeze it so it stays a true empty reference for
+            # the board-clear test and the recent-arrival gate.
             if dart_state == "watching" and not scored_canonical:
                 fg_quiet += FG_QUIET_ALPHA * (max_fg - fg_quiet)
-            elif now < post_score_cooldown_until:
-                fg_quiet += FG_SETTLE_ALPHA * (max_fg - fg_quiet)
             recent_arrival = (now - last_arrival) < ARRIVAL_WINDOW
 
             if now - last_fg_log > 1.0:
                 last_fg_log = now
-                settling = now < post_score_cooldown_until
                 print(f"    [fg] max_fg={max_fg} quiet={fg_quiet:.0f} "
-                      f"arrived={arrived} recent={recent_arrival} "
-                      f"settling={settling} phase={dart_state}")
+                      f"arrived={arrived} recent={recent_arrival} settled={scene_settled} "
+                      f"pending={len(pendings)} scored={len(scored_canonical)} "
+                      f"phase={dart_state}")
+                dbg.event("fg", max_fg=int(max_fg), quiet=round(fg_quiet, 1),
+                          arrived=bool(arrived), recent=bool(recent_arrival),
+                          settled=bool(scene_settled),
+                          clean=bool(max((len(d) for d in darts_by_cam.values()),
+                                         default=0) <= MAX_SCORE_CONTOURS),
+                          cam_darts={i: len(d) for i, d in darts_by_cam.items()},
+                          pending=len(pendings), scored=len(scored_canonical),
+                          phase=dart_state)
 
-            # Absorb the just-scored dart into the detection references once
-            # the post-score cooldown has passed and the arm has withdrawn
-            # (fg back near baseline). From then on the next dart is the ONLY
-            # foreground object — clean contours, clean cross-camera consensus.
-            if (bg_refresh_pending and dart_state == "watching"
-                    and now >= post_score_cooldown_until and not arrived):
-                for r in readers:
-                    f = r.get_frame()
-                    if f is not None:
-                        bg_detect[r.index] = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-                bg_refresh_pending = False
-                print("    [bg] detection reference refreshed — scored darts absorbed")
-
-            # Check for empty board to heal background
+            # Heal the empty-board reference for lighting drift while the board is
+            # empty, and keep bg_detect tracking the (healed) empty board so the
+            # next visit starts from a clean reference.
             if dart_state in ["watching", "all_done"] and not scored_canonical:
                 empty_frames += 1
-                if empty_frames > 30: # 1 second empty
-                    # Slowly blend background to adapt to lighting.
-                    # Backgrounds are single-channel uint8, so convert the live
-                    # frame to grayscale and blend in uint8 space (accumulateWeighted
-                    # would need a float dst and matching channels).
+                if empty_frames > 30:   # ~1s empty
                     for r in readers:
                         f = r.get_frame()
                         if f is not None:
                             g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
                             backgrounds[r.index] = cv2.addWeighted(
                                 backgrounds[r.index], 0.95, g, 0.05, 0)
-                            # Board is empty, so the detection reference is
-                            # just the (healed) empty board again.
                             bg_detect[r.index] = backgrounds[r.index].copy()
             else:
                 empty_frames = 0
 
             if dart_state == "watching":
-                # Phantom guard: only look for a new dart if the foreground recently
-                # rose (something physically landed). A static board with reflections
-                # never rises, so it can't produce a phantom score.
-                if not recent_arrival:
-                    candidate_canonical = None
+                # Post-clear settle: the board can still be vibrating from the darts
+                # being yanked out. Hold detection off and keep re-baselining so the
+                # wobble can't confirm a phantom.
+                if now < clear_settle_until:
+                    pendings     = []
+                    fg_quiet     = float(max_fg)
+                    last_arrival = 0.0
+                # A dart must have landed recently (fg rose) for there to be anything
+                # new to find — a static board with only reflections never rises.
+                elif not recent_arrival:
+                    pendings = []
                 else:
-                    candidate_canonical, candidate_cams = find_consensus_tip(all_tips_by_cam, homographies, scored_canonical)
-                    if candidate_canonical:
-                        candidate_max_n_cams = len(candidate_cams)
-                        if candidate_max_n_cams >= MIN_CAMS_TO_TRIGGER:
-                            dart_state = "stabilising"
-                            stable_frames = 1
-                            consensus_frames = 1
-                            candidate_absent_since = None
-                            stabilising_since = time.time()
-                            print(f"Potential dart detected! Stabilising... (1/{STABLE_FRAMES})  "
-                                  f"fg={max_fg} quiet={fg_quiet:.0f}")
+                    # ── Multi-dart tracker ──────────────────────────────────────
+                    # Localise EVERY dart on the board this frame, match each NEW one
+                    # (not near an already-scored dart) to a pending candidate, and
+                    # confirm the ones that have persisted with camera agreement.
+                    # Cadence-independent: three darts in a second are three pendings.
+                    clusters = find_consensus_tips(all_tips_by_cam, homographies, min_cams=1)
+                    # Keep only NEW clusters that are geometrically TIGHT — a loose
+                    # multi-camera cluster is a flight-end / noise coincidence, not a
+                    # real tip (this is how one dart was scoring as three).
+                    fresh, loose = [], []
+                    for pos, cams, spread in clusters:
+                        if not canonical_is_new(pos, scored_canonical):
+                            continue
+                        # 3-camera clusters get a looser spread allowance (alignment
+                        # error is larger at board edges, where real darts still earn
+                        # full agreement); 2-camera clusters must be tight.
+                        tight_limit = CLUSTER_TIGHT_3CAM if len(cams) >= 3 else CLUSTER_TIGHT
+                        if spread <= tight_limit:
+                            fresh.append((pos, cams, spread))
+                        elif len(cams) >= MIN_CAMS_TO_TRIGGER:
+                            loose.append((pos, len(cams), spread))
+                    # Log loose (rejected) multi-camera clusters so a real dart that
+                    # is being dropped as "too loose" is visible (→ raise CLUSTER_TIGHT
+                    # / improve alignment) vs a phantom correctly rejected.
+                    if loose and now - last_loose_log > 0.5:
+                        last_loose_log = now
+                        for lp, lc, ls in loose:
+                            print(f"    [loose] rejected cluster ({lp[0]:.0f},{lp[1]:.0f}) "
+                                  f"{lc} cams spread={ls:.0f} > {CLUSTER_TIGHT}")
+                        dbg.event("cluster_rejected",
+                                  clusters=[{"pos": [round(lp[0]), round(lp[1])],
+                                             "cams": lc, "spread": round(ls, 1)}
+                                            for lp, lc, ls in loose])
 
-            elif dart_state == "stabilising":
-                # Timeout if we've been stuck in stabilising for over 2 seconds (flickering ghost dart)
-                if time.time() - stabilising_since > 2.0:
-                    print("Stabilising timed out (ghost dart). Reverting to watching.")
-                    dart_state = "watching"
-                    candidate_canonical = None
-                else:
-                    result = find_consensus_tip(all_tips_by_cam, homographies, scored_canonical)
-                    if not result[0]:
-                        if candidate_absent_since is None:
-                            candidate_absent_since = time.time()
-                        elif time.time() - candidate_absent_since > CANDIDATE_GRACE:
-                            dart_state             = "watching"
-                            candidate_canonical    = None
-                            candidate_n_cams       = 0
-                            candidate_max_n_cams   = 0
-                            candidate_absent_since = None
-                    else:
-                        candidate_absent_since = None
-                        avg_c, c_set = result
-                        n_cams = len(c_set)
-                        dist_c = math.hypot(avg_c[0] - candidate_canonical[0], avg_c[1] - candidate_canonical[1])
-                        blend = 0.35
-                        candidate_canonical = (
-                            blend * avg_c[0] + (1 - blend) * candidate_canonical[0],
-                            blend * avg_c[1] + (1 - blend) * candidate_canonical[1],
-                        )
-                        candidate_n_cams     = n_cams
-                        candidate_max_n_cams = max(candidate_max_n_cams, n_cams)
-
-                        if dist_c >= CANONICAL_JUMP:
-                            stable_frames = 1
-                            consensus_frames = 1 if n_cams >= MIN_CAMS_TO_TRIGGER else 0
-                        else:
-                            stable_frames += 1
+                    for p in pendings:
+                        p["matched"] = False
+                    for pos, cams, spread in fresh:
+                        n_cams = len(cams)
+                        best_p, best_d = None, CANONICAL_JUMP
+                        for p in pendings:
+                            if p["matched"]:
+                                continue
+                            d = math.hypot(pos[0] - p["pos"][0], pos[1] - p["pos"][1])
+                            if d < best_d:
+                                best_p, best_d = p, d
+                        if best_p is not None:
+                            bl = 0.35   # smooth the tracked position
+                            best_p["pos"] = (bl * pos[0] + (1 - bl) * best_p["pos"][0],
+                                             bl * pos[1] + (1 - bl) * best_p["pos"][1])
+                            best_p["seen"]    += 1
+                            best_p["absent"]   = 0
+                            best_p["matched"]  = True
+                            best_p["max_cams"] = max(best_p["max_cams"], n_cams)
+                            best_p["cur_cams"] = n_cams   # cameras agreeing THIS frame
+                            best_p["spread"]   = spread
+                            # consensus is a CONSECUTIVE streak of multi-camera frames,
+                            # not a cumulative count: a real static dart is multi-camera
+                            # every frame so it climbs fast, whereas a persistent edge
+                            # artifact that's only occasionally multi-camera (mostly 1)
+                            # keeps getting reset and can never accumulate enough — that
+                            # was scoring a phantom after sitting for ~100 frames.
                             if n_cams >= MIN_CAMS_TO_TRIGGER:
-                                consensus_frames += 1
+                                best_p["consensus"] += 1
+                            else:
+                                best_p["consensus"] = 0
+                        elif n_cams >= MIN_CAMS_TO_TRIGGER:
+                            # Only START tracking a candidate that >= 2 cameras agree
+                            # on — a lone single-camera blip is noise (and can't be
+                            # triangulated to the board plane anyway).
+                            pendings.append({
+                                "pos": pos, "seen": 1, "absent": 0, "matched": True,
+                                "max_cams": n_cams, "cur_cams": n_cams,
+                                "consensus": 1, "spread": spread,
+                            })
 
-                        if stable_frames >= STABLE_FRAMES:
-                            cx, cy   = candidate_canonical
-                            scale    = CANONICAL_RADIUS / dartboard.DOUBLE_OUT
-                            r_mm     = math.hypot(cx - CANONICAL_CENTRE, cy - CANONICAL_CENTRE) / scale
-                            # consensus_frames counts how many stabilising frames
-                            # had >= MIN_CAMS_TO_TRIGGER cameras agreeing on this
-                            # position. A phantom (throwing arm passing through)
-                            # only racks up a couple before the arm withdraws; a
-                            # real dart accumulates them steadily. This replaces
-                            # the old "multi-cam on the exact scoring frame" rule,
-                            # which dropped real darts whenever one camera
-                            # flickered at the wrong moment.
-                            in_board = (0 <= cx <= CANONICAL_SIZE and 0 <= cy <= CANONICAL_SIZE
-                                        and r_mm <= dartboard.DOUBLE_OUT * 1.2
-                                        and consensus_frames >= CONSENSUS_FRAMES_TO_SCORE)
-                            # Alignment drift can project a dart that is physically
-                            # inside the board to slightly outside CANONICAL_RADIUS.
-                            # Clamp outward-projecting tips back onto the double ring
-                            # so score_canonical returns the correct segment rather
-                            # than MISS (0 pts), which would otherwise silently drop
-                            # a real dart.
-                            if in_board and r_mm > dartboard.DOUBLE_OUT:
-                                r_c = math.hypot(cx - CANONICAL_CENTRE, cy - CANONICAL_CENTRE)
-                                s = CANONICAL_RADIUS / r_c
-                                cx = CANONICAL_CENTRE + (cx - CANONICAL_CENTRE) * s
-                                cy = CANONICAL_CENTRE + (cy - CANONICAL_CENTRE) * s
-                                candidate_canonical = (cx, cy)
-                                r_mm = dartboard.DOUBLE_OUT
-                            # Final-position dedup: individual tips are filtered by
-                            # distance, but their *average* can drift back next to an
-                            # already-scored dart and double-count it. Re-check the
-                            # smoothed result before committing.
-                            is_dup = not canonical_is_new(candidate_canonical, scored_canonical)
-                            hit = score_canonical(candidate_canonical, debug=True) if in_board else None
-                            turn_over = False
-                            # Only register tips that land in a *scoring* region. A
-                            # consensus tip outside the board (a "Miss") is almost
-                            # always a phantom cluster — flight ends or arm motion —
-                            # not a thrown dart, so we drop it instead of scoring 0.
-                            if hit is not None and hit.points > 0 and not is_dup:
-                                pos_mm = canonical_to_mm(candidate_canonical)
+                    # Forget pendings unseen for too long (flicker / arm motion). A
+                    # pending not matched this frame has no current support, and its
+                    # consecutive-multi-camera streak is broken.
+                    for p in pendings:
+                        if not p["matched"]:
+                            p["absent"] += 1
+                            p["cur_cams"] = 0
+                            p["consensus"] = 0
+                    pendings = [p for p in pendings if p["absent"] <= PENDING_GRACE_FRAMES]
+
+                    # Confirm + score one dart per frame, re-checking turn-over before
+                    # the next so a bust ignores a dart that was already in the air.
+                    # Gates: scene settled (never mid-motion) + persistence +
+                    #   • max_cams >= confirm_min_cams : reached FULL agreement at some
+                    #     point (rules out pure 2-camera flight phantoms), AND
+                    #   • cur_cams >= MIN_CAMS_TO_TRIGGER : still has real multi-camera
+                    #     support THIS frame. A real static dart is seen by every camera
+                    #     every frame; a flight-end phantom's agreement flickers and it
+                    #     ends up confirming on a lone 1-camera frame (spread 0) — this
+                    #     current-support check is what kills that, while staying lenient
+                    #     enough (2 cams) not to drop a real dart one camera briefly lost.
+                    # Contamination gate: if any camera is showing far more blobs
+                    # than there are darts present, a hand/arm is in the scene and
+                    # every cluster this frame is suspect — defer all scoring until
+                    # it clears. (scene_settled alone is fooled by a still arm.)
+                    max_cam_contours = max((len(d) for d in darts_by_cam.values()),
+                                           default=0)
+                    scene_clean = max_cam_contours <= MAX_SCORE_CONTOURS
+                    ready = [p for p in pendings
+                             if p["seen"] >= CONFIRM_FRAMES
+                             and p["consensus"] >= CONFIRM_CONSENSUS_FRAMES
+                             and p["max_cams"] >= confirm_min_cams
+                             and p["cur_cams"] >= MIN_CAMS_TO_TRIGGER] \
+                            if (scene_settled and scene_clean) else []
+                    if ready:
+                        # Prefer the most trustworthy candidate, NOT the longest-lived
+                        # one: a lingering edge artifact accumulates a high `seen` while
+                        # a freshly-landed real dart has a low one, so sorting by -seen
+                        # let the phantom win. Rank by tightest spread, then most
+                        # cameras, then persistence as a final tie-break.
+                        ready.sort(key=lambda p: (p["spread"], -p["max_cams"], -p["seen"]))
+                        p      = ready[0]
+                        pendings.remove(p)
+                        n_cams = p["max_cams"]
+                        cx, cy = p["pos"]
+                        scale  = CANONICAL_RADIUS / dartboard.DOUBLE_OUT
+                        r_mm   = math.hypot(cx - CANONICAL_CENTRE, cy - CANONICAL_CENTRE) / scale
+                        in_board = (0 <= cx <= CANONICAL_SIZE and 0 <= cy <= CANONICAL_SIZE
+                                    and r_mm <= dartboard.DOUBLE_OUT * 1.2)
+                        # Clamp a tip projected just outside the double ring (alignment
+                        # drift) back onto it, so a real dart isn't scored as MISS.
+                        if in_board and r_mm > dartboard.DOUBLE_OUT:
+                            r_c = math.hypot(cx - CANONICAL_CENTRE, cy - CANONICAL_CENTRE)
+                            s   = CANONICAL_RADIUS / r_c
+                            cx  = CANONICAL_CENTRE + (cx - CANONICAL_CENTRE) * s
+                            cy  = CANONICAL_CENTRE + (cy - CANONICAL_CENTRE) * s
+                            r_mm = dartboard.DOUBLE_OUT
+                        pos    = (cx, cy)
+                        is_dup = not canonical_is_new(pos, scored_canonical)
+                        hit    = score_canonical(pos, debug=True) if in_board else None
+                        ev     = None
+                        # Only register tips in a *scoring* region. A consensus tip
+                        # outside the board is almost always a phantom (flight ends),
+                        # so drop it rather than score 0.
+                        if hit is not None and hit.points > 0 and not is_dup:
+                            pos_mm = canonical_to_mm(pos)
+                            with GAME_LOCK:
+                                active = GAME
+                            if active is None:
+                                print("  No active game — dart dropped")
+                            else:
+                                scored_canonical.append(pos)
+                                last_arrival = now   # keep the gate open for the next dart
                                 with GAME_LOCK:
-                                    active = GAME
-                                if active is None:
-                                    # Game was ended via the API while we were stabilising.
-                                    print("  No active game — dart dropped")
-                                else:
-                                    scored_canonical.append(candidate_canonical)
-                                    # Jump fg baseline to dart-in-board level so the
-                                    # arrival gate closes immediately.  The fast EMA
-                                    # then tracks the arm withdrawing over the next
-                                    # POST_SCORE_SETTLE_SECS so the baseline settles
-                                    # at the true dart-in-board level before the next
-                                    # dart can be scored.
-                                    fg_quiet = float(max_fg)
-                                    post_score_cooldown_until = now + POST_SCORE_SETTLE_SECS
-                                    # Absorb this dart into the detection
-                                    # references once the arm has withdrawn.
-                                    bg_refresh_pending = True
+                                    ev = GAME.record_hit(hit, pos_mm)
+                                say(hit.label)
+                                print(f"  Dart {len(scored_canonical)}: {hit.label} "
+                                      f"({hit.points})  [{n_cams} cams]  {ev['message']}")
+                                dbg.event("scored", n=len(scored_canonical),
+                                          label=hit.label, points=hit.points,
+                                          ring=hit.ring, segment=hit.segment,
+                                          canonical=pos, pos_mm=pos_mm, n_cams=n_cams,
+                                          cur_cams=p.get("cur_cams"),
+                                          spread=round(p.get("spread", 0.0), 1),
+                                          seen=p.get("seen"), consensus=p.get("consensus"),
+                                          max_fg=int(max_fg), bust=ev["bust"],
+                                          turn_over=ev["turn_over"], message=ev["message"])
+                                if not ev["bust"]:
+                                    turn_points += hit.points
+                                if ev["turn_over"] and not ev["bust"] and not ev["leg_won"] and not ev["match_won"]:
                                     with GAME_LOCK:
-                                        ev = GAME.record_hit(hit, pos_mm)
-                                    print(f"  Dart {len(scored_canonical)}: {hit.label} "
-                                          f"({hit.points})  [{candidate_max_n_cams} cams]  {ev['message']}")
-                                    if not ev["bust"]:
-                                        turn_points += hit.points
-                                    turn_over = ev["turn_over"]
-                                    if turn_over and not ev["bust"] and not ev["leg_won"] and not ev["match_won"]:
-                                        with GAME_LOCK:
-                                            rem = GAME.player.score
-                                            co  = GAME.checkout_hint()
-                                        print(f"  Turn total {turn_points}, requires {rem}"
-                                              + (f"  ({' '.join(co)})" if co else ""))
-                            elif is_dup:
-                                print(f"    Dropped duplicate — within {CANONICAL_MATCH}px "
-                                      f"of an already-scored dart (same dart re-detected)")
-                            else:
-                                print(f"    Dropped phantom (r={r_mm:.0f}mm, "
-                                      f"{candidate_max_n_cams} cams) — not a scoring hit")
-                            candidate_canonical    = None
-                            candidate_n_cams       = 0
-                            candidate_max_n_cams   = 0
-                            candidate_absent_since = None
-                            if turn_over or len(scored_canonical) >= 3:
-                                dart_state       = "all_done"
-                                last_seen        = now
-                                fg_all_done_peak = max_fg
-                                print("  Turn complete — REMOVE the darts from the "
-                                      "board to start the next turn.")
-                            else:
-                                dart_state = "watching"
+                                        rem = GAME.player.score
+                                        co  = GAME.checkout_hint()
+                                    print(f"  Turn total {turn_points}, requires {rem}"
+                                          + (f"  ({' '.join(co)})" if co else ""))
+                        elif is_dup:
+                            print(f"    Dropped duplicate — within {CANONICAL_MATCH}px "
+                                  f"of an already-scored dart")
+                            dbg.event("dropped_duplicate", canonical=pos,
+                                      n_cams=n_cams, max_fg=int(max_fg))
+                        else:
+                            print(f"    Dropped phantom (r={r_mm:.0f}mm, {n_cams} cams) "
+                                  f"— not a scoring hit")
+                            dbg.event("dropped_phantom", canonical=pos, r_mm=round(r_mm, 1),
+                                      n_cams=n_cams, max_fg=int(max_fg))
+
+                        # End the visit on 3 darts, a bust, or a finished leg/match.
+                        if len(scored_canonical) >= 3 or (ev is not None and ev["turn_over"]):
+                            dart_state  = "all_done"
+                            last_seen   = now
+                            fg_darts_in = 0     # measured on the first settled all_done frame
+                            pendings    = []
+                            print("  Turn complete — REMOVE the darts from the board "
+                                  "to start the next turn.")
 
             elif dart_state == "all_done":
-                # Track fg peak so we can detect a large drop (darts removed) even
-                # when the background has drifted.  Lighting drift creeps up slowly;
-                # physically pulling 3 darts out drops fg by thousands in under a
-                # second.  We clear on EITHER:
-                #   (a) absolute level < EMPTY_FG (normal case, no drift), or
-                #   (b) current fg has dropped >10 000 below the peak seen so far
-                #       in this all_done phase (drift-robust case).
-                fg_all_done_peak = max(fg_all_done_peak, max_fg)
-                board_clear = (max_fg < EMPTY_FG or
-                               fg_all_done_peak - max_fg > 10_000)
+                # Measure the darts-in fg on the first SETTLED all_done frame (arm
+                # gone, darts standing). The board is clear once fg drops below a
+                # fraction of that. Measuring only while settled — and comparing to
+                # the darts-in level rather than a running peak — means the arm
+                # briefly spiking fg high while pulling the darts can't be mistaken
+                # for "cleared" (the old drop-from-peak test was fooled by exactly
+                # that, clearing while darts were still in the board).
+                if scene_settled and fg_darts_in == 0 and max_fg > EMPTY_FG:
+                    fg_darts_in = max_fg
+                clear_thresh = max(EMPTY_FG, int(fg_darts_in * CLEAR_FRACTION))
+                board_clear = max_fg < clear_thresh
                 if now - last_alldone_log > 1.0:
                     last_alldone_log = now
                     print(f"    [all_done] waiting for board to clear — "
-                          f"fg={max_fg} (clear when <{EMPTY_FG})")
+                          f"fg={max_fg} darts_in={fg_darts_in} (clear when <{clear_thresh})")
                 if not board_clear:
                     last_seen = now
                 elif now - last_seen >= ABSENT_SECS:
-                    # Board cleared — the engine already advanced to the next
-                    # player; announce who is up and what they need.
-                    scored_canonical     = []
-                    candidate_n_cams     = 0
-                    candidate_max_n_cams = 0
-                    dart_state           = "watching"
-                    last_seen            = 0.0
-                    empty_frames         = 0
-                    turn_points          = 0
-                    # Board is empty again — detection diffs the empty board
-                    # until the first dart of the next visit scores.
+                    # Board cleared — the engine already advanced to the next player.
+                    scored_canonical   = []
+                    pendings           = []
+                    dart_state         = "watching"
+                    last_seen          = 0.0
+                    empty_frames       = 0
+                    turn_points        = 0
+                    # The hand that pulled the darts set last_arrival a moment ago;
+                    # clear it and re-seed the baseline so the next wobble isn't read
+                    # as a fresh dart, and hold detection off until the board settles.
+                    last_arrival       = 0.0
+                    fg_quiet           = None
+                    clear_settle_until = now + CLEAR_SETTLE_SECS
+                    # Board empty again — reset the detection reference to the empty
+                    # board so the next visit's first dart is the only foreground.
                     bg_detect = {i: b.copy() for i, b in backgrounds.items()}
-                    bg_refresh_pending = False
+                    dbg.event("board_cleared", settle_secs=CLEAR_SETTLE_SECS,
+                              max_fg=int(max_fg))
                     with GAME_LOCK:
                         if GAME and not GAME.over:
                             p  = GAME.player
                             co = GAME.checkout_hint()
                             print(f"Up next: {p.name} requires {p.score}"
                                   + (f"  ({' '.join(co)})" if co else ""))
-                            pass  # frontend handles next-player announcement
 
             # History saving has been moved to server.py to ensure it saves even if the stream is not actively being viewed.
             game_was_over = GAME.over if GAME else False
@@ -1153,7 +1452,9 @@ def stream_frames(event_queue):
                     sx, sy = TILE_W / 1280, TILE_H / 720
                     cv2.drawMarker(grid, (i * TILE_W + int(bx * sx), int(by * sy)), (0, 255, 255), cv2.MARKER_STAR, 16, 2)
 
-            confidence = candidate_n_cams if dart_state == "stabilising" else 0
+            # Best in-flight candidate (most-tracked pending) drives the overlay.
+            track_pos  = max(pendings, key=lambda p: p["seen"])["pos"] if pendings else None
+            confidence = max((p["max_cams"] for p in pendings), default=0)
 
             # Bottom panel: merged board view (all cameras warped into board space
             # — a live alignment check: the rings should overlap cleanly) beside
@@ -1161,7 +1462,7 @@ def stream_frames(event_queue):
             PANEL_H = 300
             if homographies:
                 merged = make_merged_view(frames_by_cam, homographies,
-                                          scored_canonical, candidate_canonical)
+                                          scored_canonical, track_pos)
                 merged_small = cv2.resize(merged, (PANEL_H, PANEL_H))
                 cv2.putText(merged_small, "Board (cameras overlaid)", (8, 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
@@ -1186,18 +1487,16 @@ def stream_frames(event_queue):
                         backgrounds, rois, board_info = capture_background(
                             readers, homographies=homographies)
                         bg_detect = {i: b.copy() for i, b in backgrounds.items()}
-                        bg_refresh_pending = False
+                        pendings = []
                     elif key == 'n':
                         new_game()
                         scored_canonical = []
-                        candidate_canonical, candidate_n_cams, candidate_max_n_cams = None, 0, 0
-                        candidate_absent_since, dart_state = None, "watching"
+                        pendings = []
+                        dart_state = "watching"
                         fg_quiet = float(max_fg)
                         last_arrival = 0.0
                         turn_points = 0
-                        post_score_cooldown_until = 0.0
                         bg_detect = {i: b.copy() for i, b in backgrounds.items()}
-                        bg_refresh_pending = False
                     elif key == 'u':
                         # Undo the last scored dart (misread correction).
                         with GAME_LOCK:
@@ -1205,9 +1504,10 @@ def stream_frames(event_queue):
                         if undone:
                             if scored_canonical:
                                 scored_canonical.pop()
-                            candidate_canonical, candidate_n_cams, candidate_max_n_cams = None, 0, 0
-                            candidate_absent_since, dart_state = None, "watching"
+                            pendings = []
+                            dart_state = "watching"
                             say("Undo")
+                            dbg.event("undo", source="key")
                     elif key == 'b':
                         tips_now = {}
                         for reader in readers:
@@ -1219,16 +1519,15 @@ def stream_frames(event_queue):
                             bull_ref.update(tips_now)
                             bull_path.write_text(json.dumps(bull_ref))
 
-            ret, buffer = cv2.imencode('.jpg', display, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if ret:
-                yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            _publish(display)
 
             time.sleep(0.03)
 
     finally:
         for r in readers:
             r.stop()
-        # Signal the next session that the cameras are free to be re-opened.
+        # Signal the next worker (or an Align/Cameras stream) that the cameras
+        # are free to be re-opened.
         _cameras_free.set()
 
 def main():
