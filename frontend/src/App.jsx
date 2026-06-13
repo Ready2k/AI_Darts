@@ -14,6 +14,7 @@ import Caricature from './art/Caricature'
 import { useThrowAnimation } from './hooks/useThrowAnimation'
 import { ThrowState } from './config/timing'
 import CinematicDemo from './cinematic/CinematicDemo'
+import CinematicGame from './cinematic/CinematicGame'
 import { unlockAudio, sound } from './cinematic/audio'
 import { SCRIPTS } from './cinematic/scripts'
 import { getAvatar } from './config/avatars'
@@ -664,6 +665,29 @@ function Leaderboard() {
   )
 }
 
+// ── Cinematic-mode toggle (used in Settings + Live Track) ────────────────────
+function CinematicToggle({ on, onChange, disabled = false }) {
+  return (
+    <button
+      onClick={() => !disabled && onChange(!on)}
+      disabled={disabled}
+      title={disabled ? 'Cinematic mode needs a 2-player game' : undefined}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all ${
+        disabled
+          ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
+          : on
+            ? 'bg-gradient-to-r from-orange-500/25 to-fuchsia-500/25 border-orange-400/40 text-orange-200'
+            : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+      }`}>
+      <Star className={`w-4 h-4 ${on && !disabled ? 'text-amber-400' : ''}`} />
+      Cinematic mode
+      <span className={`ml-1 relative w-9 h-5 rounded-full transition-colors ${on && !disabled ? 'bg-orange-400/80' : 'bg-white/15'}`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${on && !disabled ? 'left-4' : 'left-0.5'}`} />
+      </span>
+    </button>
+  )
+}
+
 // ── App shell ───────────────────────────────────────────────────────────────
 function App() {
   const [activeTab, setActiveTab] = useState('Dashboard')
@@ -672,6 +696,17 @@ function App() {
   const [showDemo, setShowDemo] = useState(false)
   const [demoScript, setDemoScript] = useState(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [cinematicMode, setCinematicMode] = useState(
+    () => localStorage.getItem('cinematicMode') === '1'
+  )
+
+  // Toggle cinematic mode; enabling it is a user gesture so we can unlock audio
+  // and switch the caller voice on for the live broadcast.
+  const setCinematic = useCallback((on) => {
+    setCinematicMode(on)
+    localStorage.setItem('cinematicMode', on ? '1' : '0')
+    if (on) { unlockAudio(); sound.setEnabled(true) }
+  }, [])
 
   const { animState, currentDart, triggerThrow, triggerWalkOn } = useThrowAnimation()
   const pendingAnnouncement = useRef(null)
@@ -875,27 +910,49 @@ function App() {
           )}
 
           {activeTab === 'Live Track' && (
-            <div className="h-full grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6">
-              <div className="flex flex-col gap-3 min-h-0">
-                <CorrectionBoard
+            cinematicMode && hasGame(uiGame) && uiGame.players?.length === 2 ? (
+              <div className="h-full">
+                <CinematicGame
                   game={uiGame}
-                  onRefresh={refresh}
-                  isLarge
+                  avatarMap={avatarMap}
+                  animState={animState}
                   boardDarts={animatingTurn ?? uiGame?.turn}
-                  ocheCam={<OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />}
+                  cameraSrc={`${API_URL}/stream/detect`}
+                  onExit={() => setCinematic(false)}
                 />
               </div>
-              <div className="flex flex-col space-y-4 overflow-auto">
-                <Scoreboard game={uiGame} avatarMap={avatarMap} />
-                {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
-                <div className="flex-1 min-h-[300px]">
-                  <StreamPanel script="detect" label="detection"
-                    hint="Click to popout"
-                    extraButtons={<DebugSnapshot />}
-                    allowPopout />
+            ) : (
+              <div className="h-full flex flex-col gap-4">
+                <div className="flex items-center justify-end">
+                  <CinematicToggle
+                    on={cinematicMode}
+                    onChange={setCinematic}
+                    disabled={!hasGame(uiGame) || uiGame.players?.length !== 2}
+                  />
+                </div>
+                <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 min-h-0">
+                  <div className="flex flex-col gap-3 min-h-0">
+                    <CorrectionBoard
+                      game={uiGame}
+                      onRefresh={refresh}
+                      isLarge
+                      boardDarts={animatingTurn ?? uiGame?.turn}
+                      ocheCam={<OcheCam avatar={getAvatar(avatarMap[uiGame?.players?.[uiGame?.current]?.name])} animState={animState} />}
+                    />
+                  </div>
+                  <div className="flex flex-col space-y-4 overflow-auto">
+                    <Scoreboard game={uiGame} avatarMap={avatarMap} />
+                    {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
+                    <div className="flex-1 min-h-[300px]">
+                      <StreamPanel script="detect" label="detection"
+                        hint="Click to popout"
+                        extraButtons={<DebugSnapshot />}
+                        allowPopout />
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )
           )}
 
           {activeTab === 'Align' && (
@@ -912,7 +969,16 @@ function App() {
           {activeTab === 'Leaderboard' && <Leaderboard />}
 
           {activeTab === 'Settings' && (
-            <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); refresh(); setActiveTab('Live Track') }} />
+            <div className="w-full">
+              <div className="max-w-xl mx-auto px-8 pt-2 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-white/80">Cinematic mode</div>
+                  <div className="text-xs text-white/40">Broadcast-style live view (2-player games)</div>
+                </div>
+                <CinematicToggle on={cinematicMode} onChange={setCinematic} />
+              </div>
+              <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); refresh(); setActiveTab('Live Track') }} />
+            </div>
           )}
         </div>
       </main>
