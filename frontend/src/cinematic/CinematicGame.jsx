@@ -3,8 +3,8 @@
 // the live game state pushed over the WebSocket plus the shared throw-animation
 // state from App. It reuses the broadcast presentational parts (walk-on cards,
 // flanking caricatures, lower-third score panels) and the cin-* stylesheet.
-import { useState, useEffect, useRef } from 'react'
-import { X, Volume2, VolumeX, Star } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { X, Volume2, VolumeX, Star, Move } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
 import { CSS, WalkOnCard, SideChar, Panel } from './broadcastParts'
 import { sound } from './audio'
@@ -52,6 +52,56 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const walkTimers = useRef([])
   const prevSeqRef = useRef(game?.dart_seq ?? 0)
   const bigCallTimer = useRef(null)
+
+  // ── Draggable camera inset ────────────────────────────────────────────────
+  // Position is the inset's top-left within the board stage, in px. null = the
+  // default bottom-right corner. Persisted so it sticks across sessions.
+  const stageRef = useRef(null)
+  const camRef = useRef(null)
+  const dragRef = useRef(null)
+  const [camPos, setCamPos] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('cinematicCamPos')) || null } catch { return null }
+  })
+  const camPosRef = useRef(camPos)
+  const [dragging, setDragging] = useState(false)
+
+  const onCamPointerDown = useCallback((e) => {
+    const stage = stageRef.current
+    const cam = camRef.current
+    if (!stage || !cam) return
+    const stageRect = stage.getBoundingClientRect()
+    const camRect = cam.getBoundingClientRect()
+    dragRef.current = {
+      offX: e.clientX - camRect.left,
+      offY: e.clientY - camRect.top,
+      stageRect,
+      camW: camRect.width,
+      camH: camRect.height,
+    }
+    cam.setPointerCapture?.(e.pointerId)
+    setDragging(true)
+    e.preventDefault()
+  }, [])
+
+  const onCamPointerMove = useCallback((e) => {
+    const d = dragRef.current
+    if (!d) return
+    const x = Math.max(0, Math.min(e.clientX - d.stageRect.left - d.offX, d.stageRect.width - d.camW))
+    const y = Math.max(0, Math.min(e.clientY - d.stageRect.top - d.offY, d.stageRect.height - d.camH))
+    const pos = { x, y }
+    camPosRef.current = pos
+    setCamPos(pos)
+  }, [])
+
+  const onCamPointerUp = useCallback((e) => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    setDragging(false)
+    camRef.current?.releasePointerCapture?.(e.pointerId)
+    if (camPosRef.current) {
+      localStorage.setItem('cinematicCamPos', JSON.stringify(camPosRef.current))
+    }
+  }, [])
 
   const players = game?.players ?? []
   const cinPlayers = players.map((p, i) => toCinPlayer(p, i, avatarMap))
@@ -183,7 +233,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       {/* Match stage */}
       {phase === 'match' && (
         <div className="absolute inset-0 z-10 flex flex-col pt-14">
-          <div className="flex-1 relative flex items-center justify-center min-h-0 py-2">
+          <div ref={stageRef} className="flex-1 relative flex items-center justify-center min-h-0 py-2">
             <div className="cin-board-glow" />
             <div className="cin-zoom h-full max-h-[58vh] aspect-square">
               <BroadcastBoard darts={darts} />
@@ -193,11 +243,24 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
             <SideChar pl={cinPlayers[1]} pose={poses[1]} side="right" active={activeIdx === 1}
               defeated={winnerIdx != null && winnerIdx !== 1} />
 
-            {/* Live camera inset */}
+            {/* Live camera inset — drag to reposition */}
             {cameraSrc && (
-              <div className="absolute bottom-2 right-2 w-36 sm:w-44 aspect-video rounded-lg overflow-hidden border border-white/15 bg-black/60 shadow-2xl z-20">
-                <img src={cameraSrc} alt="camera" className="w-full h-full object-cover" />
-                <span className="absolute top-1 left-1 text-[8px] font-bold tracking-[0.2em] text-white/70 bg-black/50 px-1.5 py-0.5 rounded">CAM</span>
+              <div
+                ref={camRef}
+                onPointerDown={onCamPointerDown}
+                onPointerMove={onCamPointerMove}
+                onPointerUp={onCamPointerUp}
+                onPointerCancel={onCamPointerUp}
+                style={camPos ? { left: camPos.x, top: camPos.y } : { right: 8, bottom: 8 }}
+                className={`group absolute w-36 sm:w-44 aspect-video rounded-lg overflow-hidden border bg-black/60 shadow-2xl z-20 touch-none select-none ${
+                  dragging ? 'cursor-grabbing border-cyan-400/70 ring-2 ring-cyan-400/40' : 'cursor-grab border-white/15'
+                }`}>
+                <img src={cameraSrc} alt="camera" draggable={false}
+                  className="w-full h-full object-cover pointer-events-none" />
+                <span className="absolute top-1 left-1 text-[8px] font-bold tracking-[0.2em] text-white/70 bg-black/50 px-1.5 py-0.5 rounded pointer-events-none">CAM</span>
+                <span className="absolute top-1 right-1 p-0.5 rounded bg-black/50 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  <Move className="w-3 h-3" />
+                </span>
               </div>
             )}
           </div>
