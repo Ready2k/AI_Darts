@@ -123,15 +123,23 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
 
-    // Deferred (setTimeout 0) to avoid synchronous setState inside the effect body.
+    // Each walk-on card holds for 3s (total ~6s). The camera feed is mounted
+    // throughout (see render) so it warms up during the intro and is ready by
+    // the time play starts. Deferred (setTimeout 0) to avoid synchronous setState.
     if (isFresh && players.length === 2) {
-      walkTimers.current.push(setTimeout(() => { setPhase('walkon'); setWalkonIdx(0) }, 0))
-      walkTimers.current.push(setTimeout(() => setWalkonIdx(1), 2300))
-      walkTimers.current.push(setTimeout(() => setPhase('match'), 4600))
+      const intro = cinPlayers
+      const announce = (pl) => {
+        sound.cheer(false)
+        sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04 })
+      }
+      sound.stop()
+      walkTimers.current.push(setTimeout(() => { setPhase('walkon'); setWalkonIdx(0); announce(intro[0]) }, 0))
+      walkTimers.current.push(setTimeout(() => { setWalkonIdx(1); announce(intro[1]) }, 3000))
+      walkTimers.current.push(setTimeout(() => { setPhase('match'); sound.cheer(false); sound.say('Game on!', { rate: 0.9 }) }, 6000))
     } else {
       walkTimers.current.push(setTimeout(() => setPhase('match'), 0))
     }
-  }, [sig, isFresh, game, players.length])
+  }, [sig, isFresh, game, players.length, cinPlayers])
 
   useEffect(() => () => walkTimers.current.forEach(clearTimeout), [])
 
@@ -200,7 +208,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const stat = (p) => ({ darts: p.darts, pts: (p.avg * p.darts) / 3 })
 
   return (
-    <div className="relative w-full h-full overflow-hidden rounded-2xl text-white">
+    <div ref={stageRef} className="relative w-full h-full overflow-hidden rounded-2xl text-white">
       <style>{CSS}</style>
       <div className="cin-bg" />
       <div className="cin-spot cin-spot-a" />
@@ -233,7 +241,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       {/* Match stage */}
       {phase === 'match' && (
         <div className="absolute inset-0 z-10 flex flex-col pt-14">
-          <div ref={stageRef} className="flex-1 relative flex items-center justify-center min-h-0 py-2">
+          <div className="flex-1 relative flex items-center justify-center min-h-0 py-2">
             <div className="cin-board-glow" />
             <div className="cin-zoom h-full max-h-[58vh] aspect-square">
               <BroadcastBoard darts={darts} />
@@ -242,27 +250,6 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
               defeated={winnerIdx != null && winnerIdx !== 0} />
             <SideChar pl={cinPlayers[1]} pose={poses[1]} side="right" active={activeIdx === 1}
               defeated={winnerIdx != null && winnerIdx !== 1} />
-
-            {/* Live camera inset — drag to reposition */}
-            {cameraSrc && (
-              <div
-                ref={camRef}
-                onPointerDown={onCamPointerDown}
-                onPointerMove={onCamPointerMove}
-                onPointerUp={onCamPointerUp}
-                onPointerCancel={onCamPointerUp}
-                style={camPos ? { left: camPos.x, top: camPos.y } : { right: 8, bottom: 8 }}
-                className={`group absolute w-36 sm:w-44 aspect-video rounded-lg overflow-hidden border bg-black/60 shadow-2xl z-20 touch-none select-none ${
-                  dragging ? 'cursor-grabbing border-cyan-400/70 ring-2 ring-cyan-400/40' : 'cursor-grab border-white/15'
-                }`}>
-                <img src={cameraSrc} alt="camera" draggable={false}
-                  className="w-full h-full object-cover pointer-events-none" />
-                <span className="absolute top-1 left-1 text-[8px] font-bold tracking-[0.2em] text-white/70 bg-black/50 px-1.5 py-0.5 rounded pointer-events-none">CAM</span>
-                <span className="absolute top-1 right-1 p-0.5 rounded bg-black/50 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  <Move className="w-3 h-3" />
-                </span>
-              </div>
-            )}
           </div>
 
           {game.checkout && activeIdx >= 0 && (
@@ -292,6 +279,37 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           <div className="cin-flash" />
           <div className="cin-bigcall">{bigCall.text}</div>
           <div className="cin-bigcall-sub">{bigCall.sub}</div>
+        </div>
+      )}
+
+      {/* Live camera feed — mounted in both phases so it begins warming up
+          during the walk-on; in match it becomes a draggable inset. Rendered in
+          a single, stable spot so the MJPEG connection never remounts. */}
+      {cameraSrc && (
+        <div
+          ref={camRef}
+          onPointerDown={phase === 'match' ? onCamPointerDown : undefined}
+          onPointerMove={phase === 'match' ? onCamPointerMove : undefined}
+          onPointerUp={phase === 'match' ? onCamPointerUp : undefined}
+          onPointerCancel={phase === 'match' ? onCamPointerUp : undefined}
+          style={phase === 'match'
+            ? (camPos ? { left: camPos.x, top: camPos.y } : { right: 8, bottom: 8 })
+            : { left: 16, bottom: 16 }}
+          className={`group absolute aspect-video rounded-lg overflow-hidden border bg-black/60 shadow-2xl select-none transition-[width,opacity] duration-500 ${
+            phase === 'match'
+              ? `z-30 w-36 sm:w-44 touch-none ${dragging ? 'cursor-grabbing border-cyan-400/70 ring-2 ring-cyan-400/40' : 'cursor-grab border-white/15'}`
+              : 'z-10 w-28 opacity-70 border-white/10 pointer-events-none'
+          }`}>
+          <img src={cameraSrc} alt="camera" draggable={false}
+            className="w-full h-full object-cover pointer-events-none" />
+          <span className="absolute top-1 left-1 text-[8px] font-bold tracking-[0.2em] text-white/70 bg-black/50 px-1.5 py-0.5 rounded pointer-events-none">
+            {phase === 'match' ? 'CAM' : 'WARMING UP'}
+          </span>
+          {phase === 'match' && (
+            <span className="absolute top-1 right-1 p-0.5 rounded bg-black/50 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <Move className="w-3 h-3" />
+            </span>
+          )}
         </div>
       )}
     </div>
