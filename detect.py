@@ -305,6 +305,14 @@ CLEAR_FRACTION = 0.4
 #      reads lower than when the darts were in (×COLLECT_DROP_FRACTION).
 COLLECT_SPIKE_FACTOR = 1.5    # max_fg above darts-in × this = a hand reaching in
 COLLECT_DROP_FRACTION = 0.7   # after a spike, clear once settled max_fg < darts-in × this
+# Missing-dart prompt: a visit can end with FEWER than 3 darts (a dart the cameras
+# missed, then the board collected). There is no turn-over signal for that, so when
+# the SAME collection signature fires while only 1-2 darts are scored, pause the game
+# for review (enter_review) instead of silently advancing. DEFAULT OFF: enabling it
+# without the frontend prompt would pause the game in "review" with no UI to resolve
+# it (only the REST API can). Turn on once the review modal ships. It also has no
+# offline footage to validate the trigger against yet — needs a live recording.
+REVIEW_SHORT_VISITS = False
 
 
 # ── Camera reader (threaded) ───────────────────────────────────────────────────
@@ -1392,6 +1400,11 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                     else:
                         st.scored_canonical.append(pos)
                         st.last_arrival = now   # keep the gate open for the next dart
+                        # Re-baseline the collection detector to the new darts-in
+                        # state so the short-visit (missing-dart) watcher measures
+                        # against the current number of darts.
+                        st.fg_darts_in = 0
+                        st.arm_spiked  = False
                         # Snapshot the settled board after this commit so the NEXT
                         # dart can be arrival-isolated against it (caller captures
                         # the current frames into settle_ref).
@@ -1450,6 +1463,55 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                     st.pendings    = []
                     print("  Turn complete — REMOVE the darts from the board "
                           "to start the next turn.")
+
+        # ── Short-visit (missing-dart) detection ─────────────────────────────
+        # A visit with 1-2 darts produces no turn-over, so it never reaches the
+        # all_done collection check. Watch for the SAME collection signature here
+        # (arm spike relative to the darts-in level, then a settled drop below it)
+        # and PAUSE the game for review instead of letting the next visit's darts
+        # leak into this turn. Runs only with 1-2 darts scored, so the normal
+        # 3-dart flow (which goes through all_done) is untouched.
+        if (REVIEW_SHORT_VISITS and 0 < len(st.scored_canonical) < 3
+                and now >= st.clear_settle_until):
+            if scene_settled and max_fg > EMPTY_FG and max_fg > st.fg_darts_in:
+                st.fg_darts_in = max_fg     # track the standing darts-in level
+            storm = max((len(d) for d in darts_by_cam.values()), default=0)
+            if st.fg_darts_in and (max_fg > st.fg_darts_in * COLLECT_SPIKE_FACTOR
+                                   or storm > MAX_SCORE_CONTOURS):
+                st.arm_spiked = True
+            drop_target = int(st.fg_darts_in * COLLECT_DROP_FRACTION)
+            collected = st.fg_darts_in and (
+                (st.arm_spiked and scene_settled and max_fg < drop_target)
+                or max_fg < EMPTY_FG)
+            if collected:
+                with game_lock:
+                    rv = game.enter_review(reason="missing_dart") if game else None
+                if rv is not None:
+                    st.dart_state = "review"
+                    st.pendings   = []
+                    print(f"  Visit incomplete: only {len(st.scored_canonical)} "
+                          f"dart(s) detected — paused for review.")
+                    emit("visit_incomplete", thrown=len(st.scored_canonical),
+                         missing=rv["missing"], max_fg=int(max_fg))
+
+    elif st.dart_state == "review":
+        # Paused after a short visit. Hold (no scoring) until the user resolves it
+        # via the API — adds the missing dart or confirms — then reset like a
+        # board-clear and start the next visit.
+        with game_lock:
+            still = game.in_review() if game else False
+        if not still:
+            st.scored_canonical   = []
+            st.pendings           = []
+            st.dart_state         = "watching"
+            st.turn_points        = 0
+            st.last_arrival       = 0.0
+            st.fg_quiet           = None
+            st.fg_darts_in        = 0
+            st.arm_spiked         = False
+            st.clear_settle_until = now + CLEAR_SETTLE_SECS
+            reset_bg_detect()
+            emit("review_resolved", max_fg=int(max_fg))
 
     elif st.dart_state == "all_done":
         # Measure the darts-in fg on the first SETTLED all_done frame (arm

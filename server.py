@@ -230,6 +230,33 @@ async def correct_game(request: Request):
                          y_mm=float(data["y_mm"]))
     return {"ok": ev is not None, "label": hit.label, "game": detect.game_state()}
 
+
+@app.post("/api/game/review/add")
+async def review_add(request: Request):
+    """Add a manually-entered missing dart during a short-visit review. Body:
+    {x_mm, y_mm} (board click). Completing the visit advances the player."""
+    import dartboard
+    data = await request.json()
+    hit = dartboard.score_detail(float(data["x_mm"]), float(data["y_mm"]))
+    with detect.GAME_LOCK:
+        ev = (detect.GAME.add_review_dart(hit, (float(data["x_mm"]), float(data["y_mm"])))
+              if detect.GAME else None)
+    if ev is not None:
+        detect.dbg.event("review_add", label=hit.label, ring=hit.ring,
+                         segment=hit.segment, x_mm=float(data["x_mm"]),
+                         y_mm=float(data["y_mm"]))
+    return {"ok": ev is not None, "label": hit.label, "game": detect.game_state()}
+
+
+@app.post("/api/game/review/confirm")
+def review_confirm():
+    """Confirm a short visit as thrown (missing dart(s) left the board) and advance."""
+    with detect.GAME_LOCK:
+        ev = detect.GAME.confirm_review() if detect.GAME else None
+    if ev is not None:
+        detect.dbg.event("review_confirm")
+    return {"ok": ev is not None, "game": detect.game_state()}
+
 @app.post("/api/debug/simulate_hit")
 async def simulate_hit(request: Request):
     """Simulates a hit on the dartboard for testing UI animations."""
