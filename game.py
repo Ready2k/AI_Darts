@@ -69,6 +69,7 @@ class X01Game:
         self.leg_starter = 0          # who throws first this leg (rotates)
         self.turn = []                # Hits thrown in the current visit
         self.turn_pos = []            # board (x_mm, y_mm) per dart, or None
+        self.turn_conf = []           # detection confidence per dart (confirmed/provisional/...)
         self.turn_start_score = start_score
         self.winner = None            # Player who won the match, or None
         self.message = ""             # last human-readable event
@@ -83,6 +84,7 @@ class X01Game:
         # so display_turn in to_dict() can show all 3 darts.
         self._last_visit_turn = []
         self._last_visit_pos = []
+        self._last_visit_conf = []
 
         self._undo_stack = []
 
@@ -109,12 +111,13 @@ class X01Game:
 
     # ── recording darts ────────────────────────────────────────────────────
 
-    def record_score(self, points, ring="SINGLE", segment=0, multiplier=1, label=None, position=None):
+    def record_score(self, points, ring="SINGLE", segment=0, multiplier=1, label=None,
+                     position=None, confidence=None):
         """Convenience entry point (mainly for tests) — builds a Hit and records it."""
         hit = Hit(points, label or str(points), ring, segment, multiplier)
-        return self.record_hit(hit, position)
+        return self.record_hit(hit, position, confidence=confidence)
 
-    def record_hit(self, hit, position=None):
+    def record_hit(self, hit, position=None, confidence=None):
         """
         Apply one dart. `position` is an optional (x_mm, y_mm) board coordinate
         kept for display / correction. Returns an event dict describing what
@@ -135,21 +138,23 @@ class X01Game:
                 p.opened = True
             else:
                 return self._finish_dart(hit, position, bust=False, scored=False,
-                                         message=f"{hit.label} (needs double to start)")
+                                         message=f"{hit.label} (needs double to start)",
+                                         confidence=confidence)
 
         new_remaining = p.score - hit.points
         bust = self._is_bust(new_remaining, hit)
 
         if bust:
             return self._finish_dart(hit, position, bust=True, scored=False,
-                                     message=f"{hit.label} — BUST")
+                                     message=f"{hit.label} — BUST", confidence=confidence)
 
         p.score = new_remaining
         if new_remaining == 0:
-            return self._win_leg(hit, position)
+            return self._win_leg(hit, position, confidence=confidence)
 
         return self._finish_dart(hit, position, bust=False, scored=True,
-                                 message=f"{hit.label} ({hit.points})")
+                                 message=f"{hit.label} ({hit.points})",
+                                 confidence=confidence)
 
     def correct_last(self, hit, position=None):
         """
@@ -161,7 +166,8 @@ class X01Game:
         if not self._undo_stack:
             return None
         self.undo()
-        return self.record_hit(hit, position)
+        # A user-corrected dart is ground truth — mark it confirmed.
+        return self.record_hit(hit, position, confidence="confirmed")
 
     def _is_bust(self, new_remaining, hit):
         if self.double_out:
@@ -174,12 +180,13 @@ class X01Game:
 
     # ── turn / leg bookkeeping ─────────────────────────────────────────────
 
-    def _finish_dart(self, hit, position, bust, scored, message):
+    def _finish_dart(self, hit, position, bust, scored, message, confidence=None):
         self.dart_seq += 1
         self.last_dart_label = hit.label
         self.last_dart_pos = list(position) if position else None
         self.turn.append(hit)
         self.turn_pos.append(position)
+        self.turn_conf.append(confidence)
         self.message = message
         turn_over = bust or len(self.turn) >= 3
         if turn_over:
@@ -198,12 +205,14 @@ class X01Game:
     def _advance_player(self):
         self._last_visit_turn = list(self.turn)
         self._last_visit_pos = list(self.turn_pos)
+        self._last_visit_conf = list(self.turn_conf)
         self.current = (self.current + 1) % len(self.players)
         self.turn = []
         self.turn_pos = []
+        self.turn_conf = []
         self.turn_start_score = self.player.score
 
-    def _win_leg(self, hit, position):
+    def _win_leg(self, hit, position, confidence=None):
         p = self.player
         p.total_points += self.turn_start_score      # whole leg's worth scored
         p.total_darts  += len(self.turn) + 1
@@ -212,6 +221,7 @@ class X01Game:
         self.last_dart_pos = list(position) if position else None
         self.turn.append(hit)
         self.turn_pos.append(position)
+        self.turn_conf.append(confidence)
         p.legs += 1
 
         set_won = match_won = False
@@ -239,6 +249,7 @@ class X01Game:
     def _start_new_leg(self):
         self._last_visit_turn = list(self.turn)
         self._last_visit_pos = list(self.turn_pos)
+        self._last_visit_conf = list(self.turn_conf)
         for q in self.players:
             q.score = self.start_score
             q.opened = False
@@ -246,6 +257,7 @@ class X01Game:
         self.current = self.leg_starter
         self.turn = []
         self.turn_pos = []
+        self.turn_conf = []
         self.turn_start_score = self.start_score
 
     # ── undo ───────────────────────────────────────────────────────────────
@@ -262,6 +274,7 @@ class X01Game:
             "leg_starter": self.leg_starter,
             "turn": list(self.turn),
             "turn_pos": list(self.turn_pos),
+            "turn_conf": list(self.turn_conf),
             "turn_start_score": self.turn_start_score,
             "winner": self.winner.name if self.winner else None,
             "message": self.message,
@@ -270,6 +283,7 @@ class X01Game:
             "last_dart_pos": self.last_dart_pos,
             "_last_visit_turn": list(self._last_visit_turn),
             "_last_visit_pos": list(self._last_visit_pos),
+            "_last_visit_conf": list(self._last_visit_conf),
         }
 
     def undo(self):
@@ -283,6 +297,7 @@ class X01Game:
         self.leg_starter = snap["leg_starter"]
         self.turn = list(snap["turn"])
         self.turn_pos = list(snap["turn_pos"])
+        self.turn_conf = list(snap.get("turn_conf", [None] * len(snap["turn"])))
         self.turn_start_score = snap["turn_start_score"]
         self.winner = next((p for p in self.players if p.name == snap["winner"]), None)
         self.message = snap["message"]
@@ -291,6 +306,7 @@ class X01Game:
         self.last_dart_pos = snap.get("last_dart_pos")
         self._last_visit_turn = list(snap.get("_last_visit_turn", []))
         self._last_visit_pos = list(snap.get("_last_visit_pos", []))
+        self._last_visit_conf = list(snap.get("_last_visit_conf", []))
         return True
 
     # ── serialisation ──────────────────────────────────────────────────────
@@ -316,6 +332,10 @@ class X01Game:
         # frontend animate the 3rd dart even though self.turn is [].
         disp_turn = self.turn if self.turn else self._last_visit_turn
         disp_pos  = self.turn_pos if self.turn else self._last_visit_pos
+        disp_conf = self.turn_conf if self.turn else self._last_visit_conf
+        # pad confidence lists so a short/legacy list never truncates the zip
+        t_conf = list(self.turn_conf) + [None] * (len(self.turn) - len(self.turn_conf))
+        d_conf = list(disp_conf) + [None] * (len(disp_turn) - len(disp_conf))
         return {
             "start_score": self.start_score,
             "double_in": self.double_in,
@@ -327,13 +347,13 @@ class X01Game:
             "dart_seq": self.dart_seq,
             "turn": [
                 {"label": h.label, "points": h.points,
-                 "pos": list(pos) if pos else None}
-                for h, pos in zip(self.turn, self.turn_pos)
+                 "pos": list(pos) if pos else None, "confidence": conf}
+                for h, pos, conf in zip(self.turn, self.turn_pos, t_conf)
             ],
             "display_turn": [
                 {"label": h.label, "points": h.points,
-                 "pos": list(pos) if pos else None}
-                for h, pos in zip(disp_turn, disp_pos)
+                 "pos": list(pos) if pos else None, "confidence": conf}
+                for h, pos, conf in zip(disp_turn, disp_pos, d_conf)
             ],
             "turn_points": sum(h.points for h in self.turn),
             "checkout": self.checkout_hint(),

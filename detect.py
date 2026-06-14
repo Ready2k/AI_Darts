@@ -1400,7 +1400,7 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                         # intersection is exact regardless of correctness).
                         conf, conf_reason = dart_confidence(n_cams)
                         with game_lock:
-                            ev = game.record_hit(hit, pos_mm)
+                            ev = game.record_hit(hit, pos_mm, confidence=conf)
                         say(hit.label)
                         print(f"  Dart {len(st.scored_canonical)}: {hit.label} "
                               f"({hit.points})  [{n_cams} cams, {conf}]  {ev['message']}")
