@@ -152,6 +152,46 @@ check("correction turns bust into win", g2.over and g2.winner.name == "A")
 check("correct_last on empty game returns None", X01Game(["A"]).correct_last(dartboard.score_detail(0, 0)) is None)
 
 
+# ── confidence + visit review (missing dart) ──────────────────────────────────
+
+print("confidence")
+g = X01Game(["A"], start_score=501)
+g.record_score(20, "SINGLE", 20, 1, "20", confidence="confirmed")
+g.record_score(20, "SINGLE", 20, 1, "20", confidence="provisional")
+d = g.to_dict()
+check("confidence carried into to_dict", d["turn"][0]["confidence"] == "confirmed")
+check("provisional confidence carried", d["turn"][1]["confidence"] == "provisional")
+check("undo preserves confidence", (g.undo(), g.to_dict()["turn"][0]["confidence"])[1] == "confirmed")
+
+print("visit review (missing dart)")
+g = X01Game(["A", "B"], start_score=501)
+g.record_score(20, "SINGLE", 20, 1, "20")
+g.record_score(5, "SINGLE", 5, 1, "5")           # only 2 darts detected, then collected
+rv = g.enter_review()
+check("enter_review pauses on a short visit", g.in_review() and rv["missing"] == 1)
+check("review does NOT advance the player", g.current == 0 and len(g.turn) == 2)
+check("review surfaced in to_dict", g.to_dict()["review"]["thrown"] == 2)
+# user adds the missing dart manually -> completes the visit and advances
+ev = g.add_review_dart(dartboard.score_detail(0, 130))   # a 20
+check("add_review_dart completes visit", ev["turn_over"] and not g.in_review())
+check("player advanced after completing visit", g.current == 1)
+check("missing dart scored (501-45)", g.players[0].score == 456)
+
+# confirm path: short visit confirmed as-thrown advances with the darts thrown
+g = X01Game(["A", "B"], start_score=501)
+g.record_score(20, "SINGLE", 20, 1, "20")
+g.enter_review()
+check("enter_review on 1 dart", g.review["missing"] == 2)
+g.confirm_review()
+check("confirm_review advances", g.current == 1 and not g.in_review())
+check("confirmed visit kept its 20 (501-20)", g.players[0].score == 481)
+gg = X01Game(["A"])
+gg.record_score(1, "SINGLE", 1, 1, "1")
+gg.record_score(1, "SINGLE", 1, 1, "1")
+gg.record_score(1, "SINGLE", 1, 1, "1")
+check("enter_review no-op on a full 3-dart turn", gg.enter_review() is None)
+
+
 # ── serialisation ───────────────────────────────────────────────────────────
 
 print("serialisation")

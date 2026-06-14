@@ -86,6 +86,10 @@ class X01Game:
         self._last_visit_pos = []
         self._last_visit_conf = []
 
+        # Set when a visit ends short (missing dart) — the engine pauses for the
+        # user to add the dart or confirm. See enter_review().
+        self.review = None
+
         self._undo_stack = []
 
     # ── helpers ────────────────────────────────────────────────────────────
@@ -168,6 +172,70 @@ class X01Game:
         self.undo()
         # A user-corrected dart is ground truth — mark it confirmed.
         return self.record_hit(hit, position, confidence="confirmed")
+
+    # ── visit review (missing-dart prompt) ─────────────────────────────────
+    # When a visit ends with fewer than 3 darts — a dart was missed by the
+    # cameras, then the board was collected — the engine does NOT silently
+    # advance (which would also misattribute the next visit's darts to this
+    # player). Instead it PAUSES in a review state so the user can add the
+    # missing dart (manual entry) or confirm the visit as thrown.
+
+    def enter_review(self, reason="incomplete"):
+        """Pause for the user after a short visit (1-2 darts). Does NOT advance.
+        No-op (returns None) for a full/empty visit, when over, or already in
+        review. Returns the review dict."""
+        if self.over or self.review is not None:
+            return self.review
+        n = len(self.turn)
+        if n <= 0 or n >= 3:
+            return None
+        self.review = {
+            "reason": reason,
+            "player": self.player.name,
+            "thrown": n,
+            "missing": 3 - n,
+            "darts": [h.label for h in self.turn],
+            "remaining": self.player.score,
+        }
+        self.message = (f"{self.player.name}: only {n} dart"
+                        f"{'s' if n != 1 else ''} detected — add the missing "
+                        f"dart or confirm")
+        return self.review
+
+    def in_review(self):
+        return self.review is not None
+
+    def add_review_dart(self, hit, position=None, confidence="confirmed"):
+        """Add a manually-entered missing dart during review. If it completes the
+        visit (3 darts / bust / win) the review ends and the player advances;
+        otherwise the review counts update and the pause continues."""
+        if self.review is None:
+            return None
+        ev = self.record_hit(hit, position, confidence=confidence)
+        if ev["turn_over"] or len(self.turn) >= 3:
+            self.review = None
+        else:
+            self.review.update(
+                thrown=len(self.turn), missing=3 - len(self.turn),
+                darts=[h.label for h in self.turn], remaining=self.player.score)
+        return ev
+
+    def confirm_review(self):
+        """User confirms the short visit as thrown (the missing dart(s) left the
+        board). Finalize the visit and advance. Returns a turn-over event."""
+        if self.review is None:
+            return None
+        self.review = None
+        if self.turn:
+            self._push_undo()
+            self._end_turn(bust=False)
+        self.message = "Visit confirmed"
+        return self._event(self.last_hit_placeholder(), bust=False, turn_over=True,
+                           message=self.message)
+
+    def last_hit_placeholder(self):
+        """A minimal Hit for confirm_review's event (no new dart was thrown)."""
+        return Hit(0, self.last_dart_label or "-", "MISS", 0, 1)
 
     def _is_bust(self, new_remaining, hit):
         if self.double_out:
@@ -284,6 +352,7 @@ class X01Game:
             "_last_visit_turn": list(self._last_visit_turn),
             "_last_visit_pos": list(self._last_visit_pos),
             "_last_visit_conf": list(self._last_visit_conf),
+            "review": copy.deepcopy(self.review),
         }
 
     def undo(self):
@@ -307,6 +376,7 @@ class X01Game:
         self._last_visit_turn = list(snap.get("_last_visit_turn", []))
         self._last_visit_pos = list(snap.get("_last_visit_pos", []))
         self._last_visit_conf = list(snap.get("_last_visit_conf", []))
+        self.review = copy.deepcopy(snap.get("review"))
         return True
 
     # ── serialisation ──────────────────────────────────────────────────────
@@ -361,4 +431,5 @@ class X01Game:
             "over": self.over,
             "winner": self.winner.name if self.winner else None,
             "players": [p.to_dict() for p in self.players],
+            "review": self.review,
         }
