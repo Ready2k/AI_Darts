@@ -88,6 +88,31 @@ tips = find_tips_by_lines(shafts, {0: I, 1: I, 2: I}, min_cams=3)
 check(any(math.hypot(t[0][0] - tip[0], t[0][1] - tip[1]) < 1.5 and len(t[1]) == 3 for t in tips),
       "true tip recovered with 3-camera support despite per-camera flight lines")
 
+print("2-camera ghost hugging a 3-camera tip is suppressed")
+# A real dart at A is seen by all 3 cameras (solid). Two of those cameras have a
+# second shaft whose lines cross ~28px away at G — a mis-triangulation ghost along
+# the dart's line (this is the live 'phantom 8 next to the real 11' case). A
+# genuinely separate 2-camera dart at F is far away and must survive.
+A, G, F = (200, 150), (172, 150), (360, 360)
+shafts = {
+    0: [shaft(A, (2, 1)), shaft(G, (0, 1)), shaft(F, (1, 0))],
+    1: [shaft(A, (2, -1)), shaft(G, (1, 0)), shaft(F, (0, 1))],
+    2: [shaft(A, (0, 1))],   # cam2 sees only A (vertical x=200 misses the ghost)
+}
+tips = find_tips_by_lines(shafts, {0: I, 1: I, 2: I}, min_cams=2)
+tA = nearest(tips, A)
+check(math.hypot(tA[0][0] - A[0], tA[0][1] - A[1]) < 1.5 and len(tA[1]) == 3,
+      "the real dart A is found with 3-camera support")
+near_A = [t for t in tips
+          if 1.0 < math.hypot(t[0][0] - A[0], t[0][1] - A[1]) <= 35.0]
+check(not near_A, f"the 2-camera ghost near A is suppressed (got {len(near_A)} extra)")
+check(any(math.hypot(t[0][0] - F[0], t[0][1] - F[1]) < 1.5 for t in tips),
+      "a far-away genuine 2-camera dart is NOT suppressed")
+# With suppression disabled, the ghost reappears (proves it's the shadow gate).
+tips_noshadow = find_tips_by_lines(shafts, {0: I, 1: I, 2: I}, min_cams=2, shadow=0.0)
+check(any(1.0 < math.hypot(t[0][0] - A[0], t[0][1] - A[1]) <= 35.0 for t in tips_noshadow),
+      "(control) the ghost is present when shadow=0")
+
 print()
 if _fails:
     print(f"{_fails} failed")

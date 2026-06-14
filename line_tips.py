@@ -76,7 +76,7 @@ def _least_squares_point(lines):
 
 def find_tips_by_lines(shafts_by_cam, homographies, min_cams=2,
                        assoc=24.0, endcap=30.0, tight_2cam=24.0, tight_3cam=40.0,
-                       board_radius=240.0, dedup=14.0):
+                       board_radius=240.0, dedup=14.0, shadow=35.0, full_cams=3):
     """Localise dart tips as the concurrence of warped shaft lines.
 
     shafts_by_cam : {cam_idx: [(p1, p2), ...]} shaft endpoints in *pixel* space.
@@ -157,4 +157,20 @@ def find_tips_by_lines(shafts_by_cam, homographies, min_cams=2,
         if any(math.hypot(tip[0] - k[0][0], tip[1] - k[0][1]) < dedup for k in kept):
             continue
         kept.append((tip, cams, res))
+
+    # Shadow suppression: a tip with fewer than full_cams cameras sitting within
+    # `shadow` px of a FULL-agreement (>= full_cams) tip is that solid dart's own
+    # mis-triangulation ghost — two cameras' shafts cross a second time a few px
+    # off the true tip, which all cameras actually concur on. (A real separate
+    # dart that close has its own independent shafts and normally earns full
+    # agreement too, so it isn't dropped.) Two cameras always intersect exactly
+    # (residual 0), so without this a 2-camera ghost is geometrically
+    # indistinguishable from a real tip — only its proximity to the strong tip
+    # betrays it.
+    strong = [k for k in kept if len(k[1]) >= full_cams]
+    if strong:
+        kept = [(tip, cams, res) for tip, cams, res in kept
+                if len(cams) >= full_cams
+                or not any(math.hypot(tip[0] - s[0][0], tip[1] - s[0][1]) <= shadow
+                           for s in strong)]
     return kept

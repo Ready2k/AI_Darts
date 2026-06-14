@@ -245,7 +245,19 @@ MAX_SCORE_CONTOURS = 6
 # and, unlike a drop-from-peak test, NOT fooled by the arm briefly spiking fg high
 # then withdrawing while the darts are still in the board).
 CLEAR_FRACTION = 0.4
-
+# Collection-based board-clear. An ABSOLUTE empty-fg threshold is fragile: a
+# grazing camera (cam1 here) outlines the board's metal spider wires as a few
+# thousand px of phantom foreground whenever a tiny board/camera shift desyncs it
+# from its background reference, so an EMPTY board can read max_fg≈3,800 — above
+# the absolute clear threshold — and the board never "clears". Instead detect the
+# unmistakable RELATIVE signature of a collection (immune to that baseline offset
+# because it's measured against this visit's darts-in level):
+#   1. an ARM SPIKE — the player reaches in: max_fg jumps far above the darts-in
+#      level (×COLLECT_SPIKE_FACTOR), and/or a contour storm appears; THEN
+#   2. fg SETTLES BELOW the darts-in level — darts removed, so the settled board
+#      reads lower than when the darts were in (×COLLECT_DROP_FRACTION).
+COLLECT_SPIKE_FACTOR = 1.5    # max_fg above darts-in × this = a hand reaching in
+COLLECT_DROP_FRACTION = 0.7   # after a spike, clear once settled max_fg < darts-in × this
 
 
 # ── Camera reader (threaded) ───────────────────────────────────────────────────
@@ -448,14 +460,24 @@ def detect_all_darts(frame, background, roi=None, min_aspect=1.8,
     _, mask = cv2.threshold(diff, DIFF_THRESH, 255, cv2.THRESH_BINARY)
     if roi is not None:
         mask = cv2.bitwise_and(mask, roi)
+    # Foreground-occupancy count: OPEN the mask before counting. A stale or
+    # slightly-shifted background reference makes a grazing camera (cam1) diff the
+    # dartboard's thin metal SPIDER WIRES into thousands of phantom px — enough to
+    # defeat the board-clear / arrival gates even though the board is empty.
+    # Opening (erode→dilate, 5x5) erases those thin lines while keeping the thick
+    # dart blobs, so occupancy tracks real darts, not reference drift. (Measured on
+    # match_20260614_110606: a stale-ref empty board 7844px → 0; a 3-dart board
+    # stays ~6500.) The detection/contour `mask` below is left untouched, so this
+    # does not change which shafts are detected — only the occupancy magnitude.
+    fg_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     if empty_background is None:
-        fg_area = int(cv2.countNonZero(mask))
+        fg_mask = mask
     else:
         ediff = cv2.absdiff(gray, empty_background)
-        _, emask = cv2.threshold(ediff, DIFF_THRESH, 255, cv2.THRESH_BINARY)
+        _, fg_mask = cv2.threshold(ediff, DIFF_THRESH, 255, cv2.THRESH_BINARY)
         if roi is not None:
-            emask = cv2.bitwise_and(emask, roi)
-        fg_area = int(cv2.countNonZero(emask))
+            fg_mask = cv2.bitwise_and(fg_mask, roi)
+    fg_area = int(cv2.countNonZero(cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, fg_kernel)))
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -1098,6 +1120,7 @@ def _run_detection(event_queue):
     fg_prev                   = None    # previous frame's max_fg (scene-settle test)
     fg_stable_frames          = 0       # consecutive frames with little fg change
     fg_darts_in               = 0       # fg level with this visit's darts in the board
+    arm_spiked                = False   # saw the collection arm reach in (board-clear gate)
     known_game_gen            = STATUS["game_gen"]   # detect API-triggered game changes
     # How many cameras must tightly agree to confirm a dart (full agreement when
     # 3 cameras are present; degrades to whatever is available with fewer).
@@ -1428,27 +1451,42 @@ def _run_detection(event_queue):
                         if len(scored_canonical) >= 3 or (ev is not None and ev["turn_over"]):
                             dart_state  = "all_done"
                             last_seen   = now
-                            fg_darts_in = 0     # measured on the first settled all_done frame
+                            fg_darts_in = 0         # measured on the first settled all_done frame
+                            arm_spiked  = False     # await this visit's collection arm
                             pendings    = []
                             print("  Turn complete — REMOVE the darts from the board "
                                   "to start the next turn.")
 
             elif dart_state == "all_done":
                 # Measure the darts-in fg on the first SETTLED all_done frame (arm
-                # gone, darts standing). The board is clear once fg drops below a
-                # fraction of that. Measuring only while settled — and comparing to
-                # the darts-in level rather than a running peak — means the arm
-                # briefly spiking fg high while pulling the darts can't be mistaken
-                # for "cleared" (the old drop-from-peak test was fooled by exactly
-                # that, clearing while darts were still in the board).
+                # gone, darts standing) — the reference for the collection detector.
                 if scene_settled and fg_darts_in == 0 and max_fg > EMPTY_FG:
                     fg_darts_in = max_fg
-                clear_thresh = max(EMPTY_FG, int(fg_darts_in * CLEAR_FRACTION))
-                board_clear = max_fg < clear_thresh
+                # Collection signature, not an absolute empty level: an ABSOLUTE
+                # threshold is permanently defeated when a grazing camera outlines
+                # the spider wires as a few-thousand-px phantom on a board/camera
+                # shift, so an empty board reads above the threshold and never
+                # "clears". A collection is unmistakable RELATIVE to the darts-in
+                # level (immune to that baseline offset): the arm reaches in
+                # (max_fg spikes far above darts-in, and/or a contour storm), THEN
+                # fg settles BELOW darts-in (darts removed → less foreground than
+                # when they were in). Require the spike before trusting a low
+                # settled level so the darts STANDING (a quiet level all along)
+                # can't be mistaken for "collected".
+                storm = max((len(d) for d in darts_by_cam.values()), default=0)
+                if fg_darts_in and (max_fg > fg_darts_in * COLLECT_SPIKE_FACTOR
+                                    or storm > MAX_SCORE_CONTOURS):
+                    arm_spiked = True
+                drop_target = int(fg_darts_in * COLLECT_DROP_FRACTION)
+                board_clear = (
+                    (arm_spiked and scene_settled and max_fg < drop_target)
+                    or max_fg < EMPTY_FG)     # genuine-empty fallback (quiet full clear)
                 if now - last_alldone_log > 1.0:
                     last_alldone_log = now
                     print(f"    [all_done] waiting for board to clear — "
-                          f"fg={max_fg} darts_in={fg_darts_in} (clear when <{clear_thresh})")
+                          f"fg={max_fg} darts_in={fg_darts_in} "
+                          f"arm_spiked={arm_spiked} (clear when settled <{drop_target} "
+                          f"after spike, or <{EMPTY_FG})")
                 if not board_clear:
                     last_seen = now
                 elif now - last_seen >= ABSENT_SECS:
@@ -1469,7 +1507,8 @@ def _run_detection(event_queue):
                     # board so the next visit's first dart is the only foreground.
                     bg_detect = {i: b.copy() for i, b in backgrounds.items()}
                     dbg.event("board_cleared", settle_secs=CLEAR_SETTLE_SECS,
-                              max_fg=int(max_fg))
+                              max_fg=int(max_fg), arm_spiked=bool(arm_spiked),
+                              darts_in=int(fg_darts_in))
                     with GAME_LOCK:
                         if GAME and not GAME.over:
                             p  = GAME.player
