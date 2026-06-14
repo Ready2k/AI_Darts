@@ -21,6 +21,7 @@ import numpy as np
 import dartboard
 import game
 import history
+import line_tips
 from debug_recorder import recorder as dbg
 
 CAMERAS = [0, 1, 2]
@@ -123,7 +124,18 @@ CANDIDATE_GRACE = 0.5
 # Detection tuning
 DIFF_THRESH   = 25    # pixel intensity change to count as foreground
 MIN_DART_AREA = 120   # minimum contour area
-MAX_DART_AREA = 8000  # maximum (ignore hand/arm blobs)
+MAX_DART_AREA = 8000  # maximum for a SQUAT blob (ignore hand/arm/lighting washes)
+# A camera viewing the board edge-on sees several grouped darts STACK into one
+# elongated contour far larger than a single dart (e.g. cam1 on a top-of-board
+# cluster: ~18k px, aspect ~4). Capping every contour at MAX_DART_AREA made that
+# camera go blind on grouped darts — it contributed nothing and the cluster
+# collapsed to 2-camera, where a flight end can mis-triangulate. A merged-dart
+# blob stays linear (high aspect), so it gets a looser ceiling; a genuine arm/
+# lighting wash is squat (low aspect) and is still held to MAX_DART_AREA. The
+# single fitted line through such a blob ends at the true tip cluster, so it
+# still feeds a usable tip to the cross-camera consensus.
+MAX_MERGED_DART_AREA = 25000  # ceiling for an ELONGATED (aspect >= MERGED_ASPECT) blob
+MERGED_ASPECT        = 2.5     # above this a large contour reads as stacked darts, not a wash
 
 # Per-camera minimum aspect ratio. A dart seen near end-on produces a squat
 # blob; too high a floor silently removes that camera from the consensus vote.
@@ -453,7 +465,7 @@ def detect_all_darts(frame, background, roi=None, min_aspect=1.8,
     results = []
     for c in contours:
         area = cv2.contourArea(c)
-        if not (MIN_DART_AREA < area < MAX_DART_AREA):
+        if area <= MIN_DART_AREA:
             continue
         rect = cv2.minAreaRect(c)
         w, h = rect[1]
@@ -461,6 +473,12 @@ def detect_all_darts(frame, background, roi=None, min_aspect=1.8,
             continue
         aspect = max(w, h) / min(w, h)
         if aspect < min_aspect:
+            continue
+        # Aspect-dependent area ceiling: an elongated blob can be several grouped
+        # darts merged in an edge-on view (keep it — its fitted line still ends at
+        # the tip), but a large SQUAT blob is an arm/lighting wash (reject).
+        area_cap = MAX_MERGED_DART_AREA if aspect >= MERGED_ASPECT else MAX_DART_AREA
+        if area >= area_cap:
             continue
         vx, vy, x0, y0 = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
         pts = c.reshape(-1, 2).astype(np.float32)
@@ -1107,6 +1125,7 @@ def _run_detection(event_queue):
             tiles           = []
             now             = time.monotonic()
             all_tips_by_cam = {}
+            shafts_by_cam   = {}
             frames_by_cam   = {}
             darts_by_cam    = {}
             max_fg          = 0
@@ -1127,6 +1146,10 @@ def _run_detection(event_queue):
                 )
                 tiles.append(tile)
                 all_tips_by_cam[reader.index] = detected_tips
+                # Full shaft lines (not split endpoints) for the line-intersection
+                # tip finder — it warps each shaft to canonical and meets them at the
+                # board plane, which the flight end can't fake.
+                shafts_by_cam[reader.index] = [(p1, p2) for p1, p2, _c in darts]
                 darts_by_cam[reader.index] = darts
                 max_fg = max(max_fg, fg)
 
@@ -1213,7 +1236,19 @@ def _run_detection(event_queue):
                     # (not near an already-scored dart) to a pending candidate, and
                     # confirm the ones that have persisted with camera agreement.
                     # Cadence-independent: three darts in a second are three pendings.
-                    clusters = find_consensus_tips(all_tips_by_cam, homographies, min_cams=1)
+                    # Shaft-line intersection: warp each camera's whole shaft to
+                    # canonical and meet the lines at the board plane — far more robust
+                    # than clustering both endpoints (the flight end mis-triangulates).
+                    # Returns (pos, cams, residual) with residual playing the role of
+                    # the old cluster `spread`. line_tips already gates residual against
+                    # the SAME tight limits below (passed in here so there is ONE source
+                    # of truth), so the per-cluster spread re-gate that follows is a
+                    # harmless pass-through — kept for the loose-cluster telemetry it
+                    # also produces. Single-camera darts can't intersect and never
+                    # scored anyway (a pending needs MIN_CAMS_TO_TRIGGER to start).
+                    clusters = line_tips.find_tips_by_lines(
+                        shafts_by_cam, homographies, min_cams=MIN_CAMS_TO_TRIGGER,
+                        tight_2cam=CLUSTER_TIGHT, tight_3cam=CLUSTER_TIGHT_3CAM)
                     # Keep only NEW clusters that are geometrically TIGHT — a loose
                     # multi-camera cluster is a flight-end / noise coincidence, not a
                     # real tip (this is how one dart was scoring as three).
