@@ -156,7 +156,7 @@ class StateReplay:
     # ── per-frame ───────────────────────────────────────────────────────────
     def _step(self, frame_index, frames):
         self._now = self._time_for(frame_index)
-        shafts_by_cam, darts_by_cam = {}, {}
+        shafts_by_cam, darts_by_cam, fg_by_cam = {}, {}, {}
         self._cur_gray = {}
         max_fg = 0
         for cam in sorted(self.backgrounds):
@@ -171,6 +171,7 @@ class StateReplay:
                 empty_background=self.backgrounds[cam])
             darts_by_cam[cam] = darts
             shafts_by_cam[cam] = [(p1, p2) for p1, p2, _c in darts]
+            fg_by_cam[cam] = fg
             max_fg = max(max_fg, fg)
 
         # Arrival-isolation shafts (newest dart vs the last settled board) —
@@ -193,7 +194,7 @@ class StateReplay:
             detect.step_tracker(
                 self.st, self._now, max_fg, shafts_by_cam, darts_by_cam,
                 self.homographies, self.game, self.lock,
-                new_shafts_by_cam=new_shafts_by_cam,
+                new_shafts_by_cam=new_shafts_by_cam, fg_by_cam=fg_by_cam,
                 emit=self._emit, say=lambda *a, **k: None,
                 heal=self._heal, reset_bg_detect=self._reset_bg_detect)
         # Maintain the arrival-isolation reference (capture after a commit, drop

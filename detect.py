@@ -224,6 +224,53 @@ PENDING_GRACE_FRAMES = 5
 # them). Raise back to 3 if alignment/detection improve enough that real darts are
 # reliably seen by all three.
 CONFIRM_MIN_CAMS = 2
+# Arrival-isolation dedup-bypass (lets a 2nd dart score within CANONICAL_MATCH of an
+# already-scored one — see step_tracker's arrival path). DISABLED by default: it is a
+# tracker heuristic that trades a narrow touching-darts win for a double-count risk,
+# and the reliability work is being refocused on per-camera DETECTION + a camera-count
+# confidence model, not more tracker gates. The machinery + its replay tests remain so
+# it can be re-enabled if a specific repeatable case justifies it.
+ARRIVAL_DEDUP_BYPASS = False
+# ── Confidence model ──────────────────────────────────────────────────────────
+# A dart's confidence is its CAMERA COUNT, never its triangulation spread: two
+# warped shaft lines always intersect EXACTLY (spread 0), so spread says nothing
+# about a 2-camera read's correctness — it is geometrically unconstrained and can
+# sit anywhere a single camera's error allows. Only 3-camera agreement pins the tip.
+CONF_CONFIRMED   = "confirmed"     # >=3 cameras — auto-score
+CONF_PROVISIONAL = "provisional"   # exactly 2 cameras — unconstrained, low confidence
+CONF_LOW         = "low"           # <=1 camera — cannot triangulate
+
+
+def dart_confidence(n_cams):
+    """Classify a dart by how many cameras saw it (NOT by spread). Returns
+    (level, reason). 3+ = confirmed, 2 = provisional (unconstrained), <=1 = low."""
+    if n_cams >= 3:
+        return CONF_CONFIRMED, f"{n_cams} cameras agree (triangulation constrained)"
+    if n_cams == 2:
+        return CONF_PROVISIONAL, "only 2 cameras — intersection is exact regardless of correctness"
+    return CONF_LOW, f"{n_cams} camera — cannot triangulate"
+
+
+def _camera_audit(cam_set, darts_by_cam, fg_by_cam):
+    """Per-camera evidence for the detection audit log: did this camera contribute
+    to the scored tip, how many candidates it saw, its foreground area, and the
+    areas of its detected contours. Lets a misread/miss be traced to the camera(s)
+    that failed."""
+    fg_by_cam = fg_by_cam or {}
+    cams = sorted(set(darts_by_cam) | set(cam_set) | set(fg_by_cam))
+    audit = {}
+    for cam in cams:
+        darts = darts_by_cam.get(cam, [])
+        audit[str(cam)] = {
+            "seen": cam in cam_set,
+            "candidates": len(darts),
+            "fg_area": int(fg_by_cam.get(cam, 0)),
+            "contour_areas": sorted(
+                (int(cv2.contourArea(c)) for _p1, _p2, c in darts), reverse=True)[:5],
+        }
+    return audit
+
+
 # Anti-phantom: a dart is only committed once the scene has SETTLED — i.e. the
 # total foreground stopped changing, meaning the dart has landed and the arm /
 # motion is gone. Confirming during motion is how a transient blob (e.g. an
@@ -1037,8 +1084,8 @@ class TrackerState:
 
 
 def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
-                 game, game_lock, *, new_shafts_by_cam=None, emit=None, say=None,
-                 heal=None, reset_bg_detect=None):
+                 game, game_lock, *, new_shafts_by_cam=None, fg_by_cam=None,
+                 emit=None, say=None, heal=None, reset_bg_detect=None):
     """One frame of the dart tracker / scoring state machine (mutates `st`).
 
     This is the EXACT per-frame body the live loop (_run_detection) runs, factored
@@ -1241,6 +1288,7 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                     best_p["matched"]  = True
                     best_p["max_cams"] = max(best_p["max_cams"], n_cams)
                     best_p["cur_cams"] = n_cams   # cameras agreeing THIS frame
+                    best_p["cams"]     = set(cams)  # which cameras THIS frame (audit)
                     best_p["spread"]   = spread
                     # Sticky arrival flag: once a pending has been corroborated by
                     # the arrival-isolation diff it may bypass the scored-dedup —
@@ -1262,7 +1310,7 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                     # triangulated to the board plane anyway).
                     st.pendings.append({
                         "pos": pos, "seen": 1, "absent": 0, "matched": True,
-                        "max_cams": n_cams, "cur_cams": n_cams,
+                        "max_cams": n_cams, "cur_cams": n_cams, "cams": set(cams),
                         "consensus": 1, "spread": spread, "arrival": arrival,
                     })
 
@@ -1327,8 +1375,10 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                 # A dart near an already-scored one is a duplicate UNLESS the
                 # arrival-isolation diff proved it is new foreground (a 2nd dart
                 # touching the 1st) — that evidence overrides the dedup radius.
+                # Gated by ARRIVAL_DEDUP_BYPASS (off by default — the bypass is a
+                # tracker heuristic with a double-count risk; see its definition).
                 is_dup = (not canonical_is_new(pos, st.scored_canonical)
-                          and not p.get("arrival"))
+                          and not (p.get("arrival") and ARRIVAL_DEDUP_BYPASS))
                 hit    = score_canonical(pos, debug=True) if in_board else None
                 ev     = None
                 # Only register tips in a *scoring* region. A consensus tip
@@ -1346,20 +1396,32 @@ def step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                         # dart can be arrival-isolated against it (caller captures
                         # the current frames into settle_ref).
                         st.want_settle_snapshot = True
+                        # Confidence is the CAMERA COUNT, not the spread (a 2-camera
+                        # intersection is exact regardless of correctness).
+                        conf, conf_reason = dart_confidence(n_cams)
                         with game_lock:
                             ev = game.record_hit(hit, pos_mm)
                         say(hit.label)
                         print(f"  Dart {len(st.scored_canonical)}: {hit.label} "
-                              f"({hit.points})  [{n_cams} cams]  {ev['message']}")
+                              f"({hit.points})  [{n_cams} cams, {conf}]  {ev['message']}")
                         emit("scored", n=len(st.scored_canonical),
                              label=hit.label, points=hit.points,
                              ring=hit.ring, segment=hit.segment,
                              canonical=pos, pos_mm=pos_mm, n_cams=n_cams,
                              cur_cams=p.get("cur_cams"),
                              spread=round(p.get("spread", 0.0), 1),
+                             confidence=conf, confidence_reason=conf_reason,
                              seen=p.get("seen"), consensus=p.get("consensus"),
                              max_fg=int(max_fg), bust=ev["bust"],
                              turn_over=ev["turn_over"], message=ev["message"])
+                        # Detection audit: per-camera evidence behind this score, so a
+                        # misread/miss can be traced to which camera(s) failed.
+                        emit("dart_audit", n=len(st.scored_canonical), label=hit.label,
+                             canonical=[round(pos[0]), round(pos[1])], ring=hit.ring,
+                             segment=hit.segment, n_cams=n_cams, confidence=conf,
+                             reason=conf_reason,
+                             cameras=_camera_audit(p.get("cams", set()),
+                                                   darts_by_cam, fg_by_cam))
                         if not ev["bust"]:
                             st.turn_points += hit.points
                         if ev["turn_over"] and not ev["bust"] and not ev["leg_won"] and not ev["match_won"]:
@@ -1586,6 +1648,7 @@ def _run_detection(event_queue):
             shafts_by_cam   = {}
             frames_by_cam   = {}
             darts_by_cam    = {}
+            fg_by_cam       = {}
             max_fg          = 0
 
             for reader in readers:
@@ -1609,6 +1672,7 @@ def _run_detection(event_queue):
                 # board plane, which the flight end can't fake.
                 shafts_by_cam[reader.index] = [(p1, p2) for p1, p2, _c in darts]
                 darts_by_cam[reader.index] = darts
+                fg_by_cam[reader.index] = fg
                 max_fg = max(max_fg, fg)
 
             # Persist the raw camera inputs (throttled) for offline replay/debugging.
@@ -1661,7 +1725,7 @@ def _run_detection(event_queue):
                 _game = GAME
             step_tracker(st, now, max_fg, shafts_by_cam, darts_by_cam, homographies,
                          _game, GAME_LOCK, new_shafts_by_cam=new_shafts_by_cam,
-                         emit=dbg.event, say=say,
+                         fg_by_cam=fg_by_cam, emit=dbg.event, say=say,
                          heal=_heal, reset_bg_detect=_reset_bg_detect)
 
             # Maintain the arrival-isolation reference: snapshot the settled board
