@@ -32,8 +32,6 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass, field
-from typing import Optional
 
 import dartboard
 
@@ -96,101 +94,107 @@ def confidence_level(conf):
     return "low"
 
 
-# ── normalized event ────────────────────────────────────────────────────────────
+# ── one throw → Hit + board position ────────────────────────────────────────────
 
-@dataclass
-class DartEvent:
-    kind: str                      # "throw" | "takeout" | "other"
-    hit: Optional[object] = None   # dartboard.Hit for a throw
-    position: Optional[tuple] = None   # (x_mm, y_mm) if the engine gives board coords
-    confidence: Optional[float] = None
-    raw: dict = field(default_factory=dict)
+def throw_to_hit(throw):
+    """Map one Autodarts throw to (dartboard.Hit, (x_mm, y_mm) | None).
 
-
-def _parse_message(data):
-    """Best-effort map of a local board-manager message to a DartEvent.
-
-    >>> FINALISE the field names from `--capture` against your board manager. <<<
-    Tolerant of a few likely shapes so a capture only needs small tweaks:
-      throw:   {"event":"throw","throw":{"segment":{"name":"T20","bed":"Triple",
-                "number":20},"coords":{"x":..,"y":..},"confidence":0.94}}
-               or a flat {"score":"T20","confidence":..}
-      takeout: {"event":"takeout"} / status "Takeout" / "board_stopped"
-    """
-    if not isinstance(data, dict):
-        return None
-    ev = str(data.get("event") or data.get("type") or data.get("status") or "").lower()
-    if "takeout" in ev or ev in ("board_stopped", "stopped"):
-        return DartEvent(kind="takeout", raw=data)
-
-    throw = data.get("throw") or data.get("dart") or data
-    if not isinstance(throw, dict):
-        return DartEvent(kind="other", raw=data)
-
-    seg = throw.get("segment")
-    notation = None
-    if isinstance(seg, dict):
-        notation = seg.get("name") or bed_to_notation(seg.get("bed"), seg.get("number"))
-    notation = notation or throw.get("score") or throw.get("notation")
-    if notation is None:
-        return DartEvent(kind="other", raw=data)
-
-    hit = notation_to_hit(str(notation))
-    if hit is None:
-        return DartEvent(kind="other", raw=data)
-
-    coords = throw.get("coords") or throw.get("position")
-    position = None
-    if isinstance(coords, dict) and "x" in coords and "y" in coords:
-        # NOTE: confirm whether coords are board-mm (bull origin) — if so they can
-        # be passed straight through for click-to-correct display. Pixel coords
-        # would need the board homography; left None until confirmed.
-        position = None
-    return DartEvent(kind="throw", hit=hit, position=position,
-                     confidence=throw.get("confidence"), raw=data)
+    Shape (confirmed from a live local board manager v1.0.7):
+        {"segment": {"name":"S20","number":20,"bed":"SingleOuter","multiplier":1},
+         "coords":  {"x": 0.0517, "y": 0.8814}}
+    `segment.name` is Autodarts' authoritative score; `coords` are normalized
+    board units (origin = bull, y-up toward 20, 1.0 ≈ the double-out ring), so
+    ×DOUBLE_OUT gives board-mm for click-to-correct display."""
+    seg = throw.get("segment") or {}
+    name = seg.get("name") or bed_to_notation(seg.get("bed"), seg.get("number"))
+    hit = notation_to_hit(str(name))
+    coords = throw.get("coords") or {}
+    pos = None
+    if "x" in coords and "y" in coords:
+        pos = (coords["x"] * dartboard.DOUBLE_OUT, coords["y"] * dartboard.DOUBLE_OUT)
+    return hit, pos
 
 
-# ── applying events to the game ─────────────────────────────────────────────────
+# ── stream consumer ──────────────────────────────────────────────────────────────
 
-def record_into(game, ev):
-    """Apply a DartEvent to a game (pure — no locking). A throw is recorded with
-    its confidence; a takeout on a SHORT visit (1-2 darts) opens the missing-dart
-    review. Returns the engine result (or None)."""
-    if ev is None or game is None:
-        return None
-    if ev.kind == "throw" and ev.hit is not None:
-        return game.record_hit(ev.hit, ev.position, confidence=confidence_level(ev.confidence))
-    if ev.kind == "takeout":
-        if 0 < len(game.turn) < 3 and not game.over:
-            return game.enter_review(reason="missing_dart")
-    return None
+class AutodartsConsumer:
+    """Reconciles the board manager's cumulative per-visit `state` stream into our
+    game. Each `Throw detected` re-sends the full throws[] for the visit, so we
+    record only the newly-added darts. `Takeout started` marks the visit end: a
+    genuinely short visit (1-2 darts — the player stopped, or a bounce-out) is
+    advanced (Autodarts is the trusted engine, so no missing-dart prompt is needed
+    the way our own cameras needed one). A new visit (numThrows rolls back) or a
+    `Manual reset` resets the per-visit counter."""
 
+    def __init__(self):
+        self._recorded = 0      # darts of the current visit already recorded
+        self._closed = False    # takeout handled for this visit
 
-def apply_event(ev):
-    """Thread-safe apply to the shared detect.GAME (starts one if needed)."""
-    import detect
-    with detect.GAME_LOCK:
-        if detect.GAME is None and ev is not None and ev.kind == "throw":
-            pass  # caller should new_game() first; avoid surprise auto-start here
-        return record_into(detect.GAME, ev)
+    def reset(self):
+        self._recorded = 0
+        self._closed = False
+
+    def on_message(self, msg, game):
+        """Process one WS message against `game`. Returns the list of engine
+        results (record_hit events) produced, for logging/telemetry."""
+        results = []
+        if not isinstance(msg, dict) or msg.get("type") != "state":
+            return results
+        d = msg.get("data") or {}
+        event = str(d.get("event") or "")
+        throws = d.get("throws") or []
+        n = d.get("numThrows", len(throws))
+
+        if event == "Manual reset" or n < self._recorded:   # new visit / reset
+            self.reset()
+
+        if game is not None and len(throws) > self._recorded:
+            for t in throws[self._recorded:]:
+                hit, pos = throw_to_hit(t)
+                if hit is not None:
+                    results.append(game.record_hit(hit, pos, confidence="confirmed"))
+                    print(f"[autodarts] {hit.label} ({hit.points})")
+            self._recorded = len(throws)
+
+        if event == "Takeout started" and not self._closed:
+            self._closed = True
+            if game is not None and 0 < len(game.turn) < 3 and not game.over:
+                # genuinely short visit — advance it (trusted engine)
+                game.enter_review(reason="autodarts_short")
+                results.append(game.confirm_review())
+        return results
 
 
 # ── websocket worker ────────────────────────────────────────────────────────────
 
-async def run(url, on_event=apply_event):
-    """Subscribe to the local board-manager WS and pump events into the game.
+def _apply_to_shared_game(consumer, msg):
+    """Thread-safe: apply a message to the shared detect.GAME (server.GameHub then
+    broadcasts the change to the cinematic frontend)."""
+    import detect
+    with detect.GAME_LOCK:
+        if detect.GAME is None:
+            return
+        consumer.on_message(msg, detect.GAME)
+
+
+async def run(url, on_message=None):
+    """Subscribe to the local board-manager WS and pump dart events into the game.
     Auto-reconnects. Intended to run as a background task in server.py when the
-    detection source is set to 'autodarts'."""
+    detection source is 'autodarts'. `on_message(consumer, msg)` defaults to
+    applying to the shared detect.GAME."""
     import websockets
-    async for ws in websockets.connect(url):
+    consumer = AutodartsConsumer()
+    sink = on_message or (lambda c, m: _apply_to_shared_game(c, m))
+    async for ws in websockets.connect(url, max_size=None):
         print(f"[autodarts] connected {url}")
+        consumer.reset()
         try:
             async for raw in ws:
                 try:
                     data = json.loads(raw)
                 except ValueError:
                     continue
-                on_event(_parse_message(data))
+                sink(consumer, data)
         except websockets.ConnectionClosed:
             print("[autodarts] connection closed — reconnecting")
             continue
