@@ -35,6 +35,9 @@ import sys
 
 import dartboard
 
+# Set to True while the websocket worker is connected, False otherwise.
+# Polled by GET /api/config to surface board-manager status in the UI.
+CONNECTED = False
 
 # ── score notation → Hit ───────────────────────────────────────────────────────
 
@@ -210,12 +213,14 @@ async def run(url, on_message=None, retry_secs=3.0):
     `on_message(consumer, msg)` defaults to applying to the shared detect.GAME."""
     import asyncio
     import websockets
+    global CONNECTED
     consumer = AutodartsConsumer()
     sink = on_message or (lambda c, m: _apply_to_shared_game(c, m))
     while True:
         try:
             async with websockets.connect(url, max_size=None) as ws:
                 print(f"[autodarts] connected {url}")
+                CONNECTED = True
                 consumer.reset()
                 async for raw in ws:
                     try:
@@ -224,8 +229,10 @@ async def run(url, on_message=None, retry_secs=3.0):
                         continue
                     sink(consumer, data)
         except asyncio.CancelledError:
+            CONNECTED = False
             raise
         except Exception as e:
+            CONNECTED = False
             print(f"[autodarts] not connected ({type(e).__name__}: {e}); "
                   f"retrying in {retry_secs:.0f}s")
             await asyncio.sleep(retry_secs)

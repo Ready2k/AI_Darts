@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -16,12 +17,37 @@ import leaderboard
 import ai
 import autodarts_adapter
 
-# Detection source: "detect" = our own CV (detect.py, started lazily by the MJPEG
-# stream); "autodarts" = consume the Autodarts board manager's local WS and feed
-# our game engine; "off" = neither. Overridable via env for now (a Settings UI
-# selector is a follow-up). AUTODARTS_URL points at the board manager (or the mock).
-DETECTION_SOURCE = os.environ.get("DETECTION_SOURCE", "detect").lower()
-AUTODARTS_URL = os.environ.get("AUTODARTS_URL", "ws://localhost:3180/api/events")
+# ── Persistent detection config ─────────────────────────────────────────────────
+# Precedence: env var > server_config.json > hardcoded default.
+# The /api/config POST endpoint updates the JSON file and hot-swaps the running
+# autodarts task so no server restart is needed.
+
+_CONFIG_PATH = Path("server_config.json")
+
+
+def _load_config():
+    if _CONFIG_PATH.exists():
+        try:
+            return json.loads(_CONFIG_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(data):
+    _CONFIG_PATH.write_text(json.dumps(data, indent=2))
+
+
+_file_cfg = _load_config()
+DETECTION_SOURCE = os.environ.get(
+    "DETECTION_SOURCE", _file_cfg.get("detection_source", "detect")
+).lower()
+AUTODARTS_URL = os.environ.get(
+    "AUTODARTS_URL", _file_cfg.get("autodarts_url", "ws://localhost:3180/api/events")
+)
+
+# Module-level handle so /api/config can cancel/restart the task without a restart.
+_autodarts_task = None
 
 
 def current_state():
@@ -98,19 +124,19 @@ async def _watch_game():
 
 @asynccontextmanager
 async def lifespan(app):
+    global _autodarts_task
     watcher = asyncio.create_task(_watch_game())
     ai_task = asyncio.create_task(ai.ai_loop())
-    autodarts_task = None
     if DETECTION_SOURCE == "autodarts":
         print(f"[server] detection source = autodarts ({AUTODARTS_URL})")
-        autodarts_task = asyncio.create_task(autodarts_adapter.run(AUTODARTS_URL))
+        _autodarts_task = asyncio.create_task(autodarts_adapter.run(AUTODARTS_URL))
     try:
         yield
     finally:
         watcher.cancel()
         ai_task.cancel()
-        if autodarts_task is not None:
-            autodarts_task.cancel()
+        if _autodarts_task is not None:
+            _autodarts_task.cancel()
         # Finalise any in-progress debug recording so the video is playable.
         detect.dbg.stop()
 
@@ -149,6 +175,52 @@ async def _guarded_stream(gen, request: Request):
             yield frame
     finally:
         gen.close()
+
+
+@app.get("/api/config")
+def get_config_endpoint():
+    """Current detection source config + board-manager connection status."""
+    return {
+        "source": DETECTION_SOURCE,
+        "autodarts_url": AUTODARTS_URL,
+        "autodarts_connected": autodarts_adapter.CONNECTED,
+    }
+
+
+@app.post("/api/config")
+async def set_config_endpoint(request: Request):
+    """Update detection source and/or board-manager URL. Takes effect immediately
+    (no restart): starts/cancels the autodarts WS task and stops our detect worker
+    when switching to autodarts. Persisted to server_config.json."""
+    global DETECTION_SOURCE, AUTODARTS_URL, _autodarts_task
+    data = await request.json()
+    new_source = str(data.get("source", DETECTION_SOURCE)).lower()
+    new_url = str(data.get("autodarts_url", AUTODARTS_URL))
+
+    _save_config({"detection_source": new_source, "autodarts_url": new_url})
+    DETECTION_SOURCE = new_source
+    AUTODARTS_URL = new_url
+
+    if new_source == "autodarts":
+        # Release our own cameras so Autodarts can use them.
+        await run_in_threadpool(detect.stop_detection)
+        # (Re)start the adapter task with the potentially new URL.
+        if _autodarts_task and not _autodarts_task.done():
+            _autodarts_task.cancel()
+        _autodarts_task = asyncio.create_task(autodarts_adapter.run(new_url))
+        print(f"[server] detection source → autodarts ({new_url})")
+    else:
+        if _autodarts_task and not _autodarts_task.done():
+            _autodarts_task.cancel()
+            _autodarts_task = None
+        print(f"[server] detection source → {new_source}")
+
+    return {
+        "ok": True,
+        "source": DETECTION_SOURCE,
+        "autodarts_url": AUTODARTS_URL,
+        "autodarts_connected": autodarts_adapter.CONNECTED,
+    }
 
 
 @app.websocket("/ws/game")

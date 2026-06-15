@@ -679,6 +679,103 @@ function Leaderboard() {
   )
 }
 
+// ── Detection source config (Settings) ─────────────────────────────────────
+function useConfig() {
+  const [config, setConfig] = useState({
+    source: 'detect', autodarts_url: 'ws://localhost:3180/api/events',
+    autodarts_connected: false,
+  })
+
+  const refresh = useCallback(() => {
+    fetch(`${API_URL}/config`).then(r => r.json()).then(setConfig).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    // Poll connection status every 5 s when on autodarts source.
+    const t = setInterval(() => {
+      fetch(`${API_URL}/config`).then(r => r.json()).then(setConfig).catch(() => {})
+    }, 5000)
+    return () => clearInterval(t)
+  }, [refresh])
+
+  const save = useCallback(async (data) => {
+    const r = await fetch(`${API_URL}/config`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(data),
+    })
+    const d = await r.json()
+    setConfig(c => ({ ...c, ...d }))
+    return d
+  }, [])
+
+  return [config, save]
+}
+
+function DetectionConfig({ config, onSave }) {
+  const [source, setSource] = useState(config.source)
+  const [url, setUrl] = useState(config.autodarts_url)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const dirty = source !== config.source || url !== config.autodarts_url
+
+  const save = async () => {
+    setBusy(true)
+    await onSave({ source, autodarts_url: url })
+    setBusy(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="max-w-xl w-full mx-auto px-8 pt-2 pb-6 border-b border-white/10 space-y-4">
+      <div>
+        <label className="text-xs uppercase tracking-widest text-white/40">Detection Source</label>
+        <div className="flex gap-2 mt-2">
+          {[
+            { id: 'detect', label: 'Our CV (detect.py)', desc: '3-camera background subtraction' },
+            { id: 'autodarts', label: 'Autodarts', desc: 'Local board manager at :3180' },
+          ].map(opt => (
+            <button key={opt.id} onClick={() => setSource(opt.id)}
+              title={opt.desc}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-sm font-semibold border transition-all text-left ${
+                source === opt.id
+                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]'
+                  : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+              }`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {source === 'autodarts' && (
+        <div>
+          <label className="text-xs uppercase tracking-widest text-white/40">Board Manager URL</label>
+          <input
+            value={url} onChange={e => setUrl(e.target.value)}
+            placeholder="ws://localhost:3180/api/events"
+            className="mt-2 w-full px-4 py-2.5 rounded-lg bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm font-mono"
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <div className={`w-2 h-2 rounded-full ${config.autodarts_connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400/70'}`} />
+            <span className="text-xs text-white/50">
+              {config.autodarts_connected ? 'Board manager connected' : 'Board manager not connected'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {dirty && (
+        <button onClick={save} disabled={busy}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-sm font-semibold hover:bg-cyan-500/30 disabled:opacity-50 transition-colors">
+          {busy ? 'Saving…' : saved ? <><Check className="w-4 h-4" /> Saved</> : <><Check className="w-4 h-4" /> Apply</>}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── Cinematic-mode toggle (used in Settings + Live Track) ────────────────────
 function CinematicToggle({ on, onChange, disabled = false }) {
   return (
@@ -706,6 +803,7 @@ function CinematicToggle({ on, onChange, disabled = false }) {
 function App() {
   const [activeTab, setActiveTab] = useState('Dashboard')
   const [game] = useGame()
+  const [config, saveConfig] = useConfig()
   const [avatarMap, setAvatarMap] = useState({})
   const [showDemo, setShowDemo] = useState(false)
   const [demoScript, setDemoScript] = useState(null)
@@ -961,11 +1059,27 @@ function App() {
                     <Scoreboard game={uiGame} avatarMap={avatarMap} />
                     {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
                     <div className="flex-1 min-h-[300px]">
-                      <StreamPanel script="detect" label="detection"
-                        hint="Click to popout"
-                        extraButtons={<DebugSnapshot />}
-                        allowPopout
-                        autoStart={autoStartDetect} />
+                      {config.source === 'autodarts' ? (
+                        <div className="w-full h-full rounded-xl bg-black/30 border border-white/10 p-5 flex flex-col gap-3">
+                          <div className="text-xs uppercase tracking-widest text-white/40">Board Manager</div>
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${config.autodarts_connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400/70'}`} />
+                            <span className={`text-sm font-semibold ${config.autodarts_connected ? 'text-emerald-300' : 'text-red-400/80'}`}>
+                              {config.autodarts_connected ? 'Connected' : 'Not connected'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-white/40 font-mono break-all">{config.autodarts_url}</p>
+                          <p className="text-xs text-white/30 mt-auto">
+                            Detection is handled by the Autodarts board manager. Camera controls are in the board manager UI.
+                          </p>
+                        </div>
+                      ) : (
+                        <StreamPanel script="detect" label="detection"
+                          hint="Click to popout"
+                          extraButtons={<DebugSnapshot />}
+                          allowPopout
+                          autoStart={autoStartDetect} />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -974,13 +1088,51 @@ function App() {
           )}
 
           {activeTab === 'Align' && (
-            <StreamPanel script="align" label="alignment" extraButtons={<AlignButtons />}
-              hint="Auto-detect to fit the board, rotate handles so numbers line up, then Confirm each camera." />
+            config.source === 'autodarts' ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center space-y-4 max-w-sm">
+                  <Crosshair className="w-16 h-16 mx-auto text-white/15" strokeWidth={1} />
+                  <div>
+                    <h3 className="text-lg font-light tracking-wider mb-1">Managed by Autodarts</h3>
+                    <p className="text-sm text-white/40">
+                      Camera alignment is handled by the Autodarts board manager.
+                      Use the board manager UI at <span className="font-mono text-white/60">http://localhost:3180</span> to align your cameras.
+                    </p>
+                  </div>
+                  <button onClick={() => setActiveTab('Settings')}
+                    className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/60 hover:bg-white/10">
+                    Switch source in Settings
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <StreamPanel script="align" label="alignment" extraButtons={<AlignButtons />}
+                hint="Auto-detect to fit the board, rotate handles so numbers line up, then Confirm each camera." />
+            )
           )}
 
           {activeTab === 'Cameras' && (
-            <StreamPanel script="check" label="cameras"
-              hint="Live feed + FPS for every USB camera." />
+            config.source === 'autodarts' ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center space-y-4 max-w-sm">
+                  <Camera className="w-16 h-16 mx-auto text-white/15" strokeWidth={1} />
+                  <div>
+                    <h3 className="text-lg font-light tracking-wider mb-1">Managed by Autodarts</h3>
+                    <p className="text-sm text-white/40">
+                      Cameras are owned by the Autodarts board manager.
+                      Switch to <span className="text-white/60">Our CV</span> in Settings to use direct camera access.
+                    </p>
+                  </div>
+                  <button onClick={() => setActiveTab('Settings')}
+                    className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/60 hover:bg-white/10">
+                    Switch source in Settings
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <StreamPanel script="check" label="cameras"
+                hint="Live feed + FPS for every USB camera." />
+            )
           )}
 
           {activeTab === 'Stats' && <Stats game={uiGame} />}
@@ -988,13 +1140,14 @@ function App() {
 
           {activeTab === 'Settings' && (
             <div className="w-full">
-              <div className="max-w-xl mx-auto px-8 pt-2 flex items-center justify-between gap-4">
+              <div className="max-w-xl mx-auto px-8 pt-2 flex items-center justify-between gap-4 pb-6 border-b border-white/10">
                 <div>
                   <div className="text-sm font-semibold text-white/80">Cinematic mode</div>
                   <div className="text-xs text-white/40">Broadcast-style live view (2-player games)</div>
                 </div>
                 <CinematicToggle on={cinematicMode} onChange={setCinematic} />
               </div>
+              <DetectionConfig config={config} onSave={saveConfig} />
               <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); setAutoStartDetect(true); refresh(); setActiveTab('Live Track') }} />
             </div>
           )}
