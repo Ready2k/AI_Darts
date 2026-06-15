@@ -76,8 +76,18 @@ function useGame() {
 
 const hasGame = (g) => g && g.running !== false && Array.isArray(g.players)
 
+// ── Confidence badge helpers ────────────────────────────────────────────────
+function ConfBadge({ confidence }) {
+  if (!confidence || confidence === 'confirmed') return null
+  return (
+    <span className={`inline-block w-1.5 h-1.5 rounded-full ml-1 -mt-0.5 align-middle ${
+      confidence === 'provisional' ? 'bg-amber-400' : 'bg-red-400'
+    }`} title={confidence} />
+  )
+}
+
 // ── Scoreboard ─────────────────────────────────────────────────────────────
-function PlayerRow({ p, active, avatar }) {
+function PlayerRow({ p, active, avatar, displayTurn }) {
   const icon = getAvatar(avatar)
   return (
     <div className={`flex items-center justify-between rounded-xl px-5 py-4 border transition-all ${
@@ -95,6 +105,22 @@ function PlayerRow({ p, active, avatar }) {
           <div className="text-[11px] text-white/40 uppercase tracking-wider">
             Sets {p.sets} · Legs {p.legs} · {p.avg.toFixed(1)} avg
           </div>
+          {active && displayTurn?.length > 0 && (
+            <div className="flex gap-1 mt-1.5">
+              {[0, 1, 2].map(i => {
+                const d = displayTurn[i]
+                return (
+                  <span key={i} className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums ${
+                    d ? (d.label === 'Miss' ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                           : 'bg-cyan-500/15 text-cyan-200 border border-cyan-500/25')
+                      : 'bg-white/5 border border-dashed border-white/15 text-transparent'
+                  }`}>
+                    {d ? <>{d.label}<ConfBadge confidence={d.confidence} /></> : '·'}
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
       <div className={`text-4xl font-bold tabular-nums ${active ? 'text-cyan-300' : 'text-white/50'}`}>
@@ -121,7 +147,9 @@ function Scoreboard({ game, avatarMap }) {
         </div>
       )}
       {game.players.map((p, i) => (
-        <PlayerRow key={i} p={p} active={i === game.current && !game.over} avatar={avatarMap[p.name]} />
+        <PlayerRow key={i} p={p} active={i === game.current && !game.over}
+          avatar={avatarMap[p.name]}
+          displayTurn={i === game.current ? (game.display_turn || game.turn) : null} />
       ))}
     </div>
   )
@@ -356,10 +384,17 @@ function GameControls({ onRefresh, onNewGame }) {
           <RefreshCw className="w-4 h-4" /> New game
         </button>
       </div>
-      <button onClick={async () => { await fetch(`${API_URL}/debug/simulate_hit`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ label: "T20" }) }); onRefresh?.(); }}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/25 border border-fuchsia-400/30 text-fuchsia-200 text-sm font-semibold transition-colors">
-        <Target className="w-4 h-4" /> Simulate Treble 20 Throw
-      </button>
+      <div className="flex gap-2">
+        <button onClick={async () => { await fetch(`${API_URL}/debug/simulate_hit`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ label: "T20" }) }); onRefresh?.(); }}
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/25 border border-fuchsia-400/30 text-fuchsia-200 text-sm font-semibold transition-colors">
+          <Target className="w-4 h-4" /> Simulate T20
+        </button>
+        <button onClick={async () => { await fetch(`${API_URL}/debug/enter_review`, { method: 'POST' }); onRefresh?.(); }}
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-200 text-sm font-semibold transition-colors"
+          title="Force review mode (test missing-dart prompt)">
+          <Bug className="w-4 h-4" /> Test review
+        </button>
+      </div>
 
       {!confirmEnd ? (
         <button onClick={() => setConfirmEnd(true)} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-400/30 text-white/50 hover:text-red-300 text-sm font-semibold transition-colors">
@@ -675,6 +710,92 @@ function Leaderboard() {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Missing-dart review modal ───────────────────────────────────────────────
+function ReviewModal({ game }) {
+  const review = game?.review
+  const [busy, setBusy] = useState(false)
+
+  if (!review) return null
+
+  const addDart = async (x_mm, y_mm) => {
+    setBusy(true)
+    await fetch(`${API_URL}/game/review/add`, {
+      method: 'POST', headers: JSON_HEADERS,
+      body: JSON.stringify({ x_mm, y_mm }),
+    }).catch(() => {})
+    setBusy(false)
+  }
+
+  const confirm = async () => {
+    setBusy(true)
+    await fetch(`${API_URL}/game/review/confirm`, { method: 'POST' }).catch(() => {})
+    setBusy(false)
+  }
+
+  const existing = review.darts || []
+  const missing = review.missing || 0
+  const added = (game.turn?.length || 0) - existing.length
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-[#0d0d14] border border-amber-400/40 shadow-2xl shadow-amber-500/10 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-start gap-4 px-6 pt-6 pb-4 border-b border-white/10">
+          <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
+            <Target className="w-5 h-5 text-amber-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-white">Missing dart detected</h3>
+            <p className="text-sm text-white/50 mt-0.5">
+              {review.player}: {existing.length} dart{existing.length !== 1 ? 's' : ''} detected
+              ({existing.join(', ')}). {missing - added} still missing.
+            </p>
+          </div>
+        </div>
+
+        {/* Dart chips */}
+        <div className="px-6 py-4 flex items-center gap-2 flex-wrap border-b border-white/10">
+          <span className="text-xs text-white/40 uppercase tracking-widest mr-1">Turn</span>
+          {existing.map((label, i) => (
+            <span key={i} className="px-2 py-1 rounded bg-cyan-500/15 border border-cyan-500/30 text-xs font-bold text-cyan-200">
+              {label}
+            </span>
+          ))}
+          {Array.from({ length: missing - added }).map((_, i) => (
+            <span key={`m${i}`} className="px-2 py-1 rounded border border-dashed border-amber-400/40 text-xs text-amber-400/60">
+              ?
+            </span>
+          ))}
+          {Array.from({ length: added }).map((_, i) => (
+            <span key={`a${i}`} className="px-2 py-1 rounded bg-amber-500/15 border border-amber-400/40 text-xs font-bold text-amber-200">
+              added
+            </span>
+          ))}
+        </div>
+
+        {/* Board click to add */}
+        {missing - added > 0 && (
+          <div className="px-6 py-4 border-b border-white/10">
+            <p className="text-xs text-white/50 mb-3">Click where the dart landed to add it:</p>
+            <div className="max-w-[260px] mx-auto">
+              <DartBoard darts={game.turn || []} armed onPick={addDart} />
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="px-6 py-4 flex gap-3">
+          <button onClick={confirm} disabled={busy}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/15 text-white/70 text-sm font-semibold hover:bg-white/10 disabled:opacity-50 transition-colors">
+            <Check className="w-4 h-4" />
+            {missing - added > 0 ? 'Dart(s) left the board / bounce-out' : 'Confirm visit'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1155,6 +1276,9 @@ function App() {
       </main>
 
       {showDemo && demoScript && <CinematicDemo script={demoScript} onExit={() => setShowDemo(false)} />}
+
+      {/* Review modal — overlays everything including cinematic */}
+      {uiGame?.review && <ReviewModal game={uiGame} />}
     </div>
   )
 }

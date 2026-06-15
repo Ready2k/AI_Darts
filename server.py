@@ -344,6 +344,19 @@ def review_confirm():
         detect.dbg.event("review_confirm")
     return {"ok": ev is not None, "game": detect.game_state()}
 
+@app.post("/api/debug/enter_review")
+def debug_enter_review():
+    """Force the current game into review state (UI testing without cameras).
+    Requires at least one dart already in the turn."""
+    with detect.GAME_LOCK:
+        if not detect.GAME:
+            return {"ok": False, "reason": "no game"}
+        if not detect.GAME.turn:
+            return {"ok": False, "reason": "no darts in turn yet — simulate a hit first"}
+        ev = detect.GAME.enter_review(reason="debug")
+    return {"ok": ev is not None, "review": ev}
+
+
 @app.post("/api/debug/simulate_hit")
 async def simulate_hit(request: Request):
     """Simulates a hit on the dartboard for testing UI animations."""

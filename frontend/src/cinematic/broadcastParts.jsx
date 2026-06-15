@@ -86,12 +86,18 @@ export function Panel({ pl, idx, score, stat, active, visitDarts, winnerIdx }) {
         <div className={`flex gap-1.5 mt-1.5 ${right ? 'justify-end' : ''}`}>
           {[0, 1, 2].map((i) => {
             const d = active ? visitDarts[i] : null
+            const conf = d?.confidence
+            const chipBorder = conf === 'low' ? '1px solid #f87171'
+              : conf === 'provisional' ? '1px solid #fbbf24'
+              : `1px solid ${pl.color}66`
             return (
-              <span key={i} className="w-10 h-5 rounded text-[10px] font-bold flex items-center justify-center tabular-nums"
+              <span key={i} className="relative w-10 h-5 rounded text-[10px] font-bold flex items-center justify-center tabular-nums"
                 style={d
-                  ? { background: `${pl.color}2a`, color: d.label === 'MISS' ? '#f87171' : '#fff', border: `1px solid ${pl.color}66` }
+                  ? { background: `${pl.color}2a`, color: d.label === 'MISS' ? '#f87171' : '#fff', border: chipBorder }
                   : { background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.15)', color: 'transparent' }}>
                 {d ? d.label : '·'}
+                {conf === 'provisional' && <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-400" title="provisional" />}
+                {conf === 'low' && <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-red-400" title="low confidence" />}
               </span>
             )
           })}

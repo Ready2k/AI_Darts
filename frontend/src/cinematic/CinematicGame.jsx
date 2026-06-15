@@ -199,7 +199,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       color: activeColor,
     }))
 
-  const visitDarts = (boardDarts || []).map((d) => ({ label: d.label }))
+  const visitDarts = (boardDarts || []).map((d) => ({ label: d.label, confidence: d.confidence }))
   const poses = cinPlayers.map((_, i) => {
     if (winnerIdx != null) return i === winnerIdx ? 'celebrate' : 'defeated'
     return i === activeIdx ? poseForState(animState) : 'idle'
