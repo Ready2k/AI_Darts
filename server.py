@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -13,6 +14,14 @@ import detect
 import history
 import leaderboard
 import ai
+import autodarts_adapter
+
+# Detection source: "detect" = our own CV (detect.py, started lazily by the MJPEG
+# stream); "autodarts" = consume the Autodarts board manager's local WS and feed
+# our game engine; "off" = neither. Overridable via env for now (a Settings UI
+# selector is a follow-up). AUTODARTS_URL points at the board manager (or the mock).
+DETECTION_SOURCE = os.environ.get("DETECTION_SOURCE", "detect").lower()
+AUTODARTS_URL = os.environ.get("AUTODARTS_URL", "ws://localhost:3180/api/events")
 
 
 def current_state():
@@ -91,11 +100,17 @@ async def _watch_game():
 async def lifespan(app):
     watcher = asyncio.create_task(_watch_game())
     ai_task = asyncio.create_task(ai.ai_loop())
+    autodarts_task = None
+    if DETECTION_SOURCE == "autodarts":
+        print(f"[server] detection source = autodarts ({AUTODARTS_URL})")
+        autodarts_task = asyncio.create_task(autodarts_adapter.run(AUTODARTS_URL))
     try:
         yield
     finally:
         watcher.cancel()
         ai_task.cancel()
+        if autodarts_task is not None:
+            autodarts_task.cancel()
         # Finalise any in-progress debug recording so the video is playable.
         detect.dbg.stop()
 

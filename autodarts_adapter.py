@@ -177,27 +177,33 @@ def _apply_to_shared_game(consumer, msg):
         consumer.on_message(msg, detect.GAME)
 
 
-async def run(url, on_message=None):
+async def run(url, on_message=None, retry_secs=3.0):
     """Subscribe to the local board-manager WS and pump dart events into the game.
-    Auto-reconnects. Intended to run as a background task in server.py when the
-    detection source is 'autodarts'. `on_message(consumer, msg)` defaults to
-    applying to the shared detect.GAME."""
+    Resilient: retries the initial connection and reconnects on drops, so it can
+    be started before the board manager (or mock) is up. Intended to run as a
+    background task in server.py when the detection source is 'autodarts'.
+    `on_message(consumer, msg)` defaults to applying to the shared detect.GAME."""
+    import asyncio
     import websockets
     consumer = AutodartsConsumer()
     sink = on_message or (lambda c, m: _apply_to_shared_game(c, m))
-    async for ws in websockets.connect(url, max_size=None):
-        print(f"[autodarts] connected {url}")
-        consumer.reset()
+    while True:
         try:
-            async for raw in ws:
-                try:
-                    data = json.loads(raw)
-                except ValueError:
-                    continue
-                sink(consumer, data)
-        except websockets.ConnectionClosed:
-            print("[autodarts] connection closed — reconnecting")
-            continue
+            async with websockets.connect(url, max_size=None) as ws:
+                print(f"[autodarts] connected {url}")
+                consumer.reset()
+                async for raw in ws:
+                    try:
+                        data = json.loads(raw)
+                    except ValueError:
+                        continue
+                    sink(consumer, data)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[autodarts] not connected ({type(e).__name__}: {e}); "
+                  f"retrying in {retry_secs:.0f}s")
+            await asyncio.sleep(retry_secs)
 
 
 async def capture(url):

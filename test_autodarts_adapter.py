@@ -97,6 +97,16 @@ c3.on_message(state("Manual reset", "Throw", []), g3)
 c3.on_message(state("Throw detected", "Throw", [T18]), g3)
 check("after manual reset, a fresh S18 records", g3.to_dict()["turn"][-1]["label"], "18")
 
+# ── full scripted game via the mock's real-schema messages → our engine ────────
+import mock_autodarts
+g4 = X01Game(["A"], start_score=501)
+c4 = ad.AutodartsConsumer()
+for m in mock_autodarts.game_messages():
+    c4.on_message(m, g4)
+check("mock 501 game checks out (D12) -> over", g4.over, True)
+check("winner is A", g4.winner.name if g4.winner else None, "A")
+check("final score 0", g4.players[0].score, 0)
+
 
 if __name__ == "__main__":
     print(f"\n{_p} passed, {_f} failed")
