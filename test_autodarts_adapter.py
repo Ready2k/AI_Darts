@@ -97,6 +97,38 @@ c3.on_message(state("Manual reset", "Throw", []), g3)
 c3.on_message(state("Throw detected", "Throw", [T18]), g3)
 check("after manual reset, a fresh S18 records", g3.to_dict()["turn"][-1]["label"], "18")
 
+# ── reconciliation: visit closes early but Autodarts keeps reporting ───────────
+# BUST on dart 1: Autodarts still reports darts 2 & 3 of that visit — they must be
+# ignored, not leak onto the next player. (NB: T20/T18/T7 above are the captured
+# SINGLES; use a real triple here.)
+REAL_T20 = {"segment": {"name": "T20", "number": 20, "bed": "Triple", "multiplier": 3},
+            "coords": {"x": 0.0, "y": 0.6}}
+gb = X01Game(["A", "B"], start_score=50)   # A on 50; T20 (60) busts
+cb = ad.AutodartsConsumer()
+cb.on_message(state("Throw detected", "Throw", [REAL_T20]), gb)        # bust -> advance to B
+check("bust advances to B", gb.current, 1)
+check("A reverted to 50 after bust", gb.players[0].score, 50)
+cb.on_message(state("Throw detected", "Throw", [REAL_T20, T18]), gb)   # stray dart 2
+cb.on_message(state("Throw detected", "Takeout", [REAL_T20, T18, T7]), gb)  # stray dart 3
+check("stray post-bust darts ignored (still B's turn, no darts)",
+      (gb.current, len(gb.turn)), (1, 0))
+check("B untouched by stray darts", gb.players[1].score, 50)
+cb.on_message(state("Takeout started", "Takeout in progress", [REAL_T20, T18, T7]), gb)
+check("no double-advance on takeout after bust", gb.current, 1)
+
+# CHECKOUT on dart 1: match over; remaining reported darts ignored, no error.
+D20 = {"segment": {"name": "D20", "number": 20, "bed": "Double", "multiplier": 2},
+       "coords": {"x": 0.0, "y": 0.95}}
+gc = X01Game(["A"], start_score=40)
+cc = ad.AutodartsConsumer()
+cc.on_message(state("Throw detected", "Throw", [D20]), gc)          # 40 - D20 = win
+check("checkout wins the match", gc.over and gc.winner.name == "A", True)
+check("score 0 on checkout", gc.players[0].score, 0)
+cc.on_message(state("Throw detected", "Throw", [D20, T20]), gc)     # stray darts after win
+cc.on_message(state("Takeout started", "Takeout in progress", [D20, T20]), gc)
+check("match stays won, score unchanged after stray darts",
+      (gc.over, gc.players[0].score), (True, 0))
+
 # ── full scripted game via the mock's real-schema messages → our engine ────────
 import mock_autodarts
 g4 = X01Game(["A"], start_score=501)

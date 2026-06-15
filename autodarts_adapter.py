@@ -120,19 +120,32 @@ def throw_to_hit(throw):
 class AutodartsConsumer:
     """Reconciles the board manager's cumulative per-visit `state` stream into our
     game. Each `Throw detected` re-sends the full throws[] for the visit, so we
-    record only the newly-added darts. `Takeout started` marks the visit end: a
-    genuinely short visit (1-2 darts — the player stopped, or a bounce-out) is
-    advanced (Autodarts is the trusted engine, so no missing-dart prompt is needed
-    the way our own cameras needed one). A new visit (numThrows rolls back) or a
-    `Manual reset` resets the per-visit counter."""
+    record only the newly-added darts.
+
+    Reconciliation guards (our game's visit model can close BEFORE Autodarts'
+    visit does — Autodarts keeps reporting darts until takeout):
+      • once our visit ends early — a BUST, a CHECKOUT/leg win, or our 3rd dart —
+        further throws of the SAME Autodarts visit are IGNORED (consumed, not
+        recorded) until takeout/rollover, so a busted player's extra dart can't
+        leak onto the next player.
+      • when the MATCH is over, throws are ignored until a new game is started.
+      • before any game exists, throws are consumed (not backfilled) so starting a
+        game mid-visit doesn't dump the in-progress darts in.
+
+    `Takeout started` ends the visit: a genuinely short visit (1-2 darts, not
+    already closed by a bust/checkout) is advanced (Autodarts is trusted, so no
+    missing-dart prompt is needed the way our own cameras needed one). A new visit
+    (numThrows rolls back) or a `Manual reset` resets the per-visit state."""
 
     def __init__(self):
-        self._recorded = 0      # darts of the current visit already recorded
-        self._closed = False    # takeout handled for this visit
+        self._recorded = 0       # darts of the current visit already consumed
+        self._closed = False     # takeout handled for this visit
+        self._visit_done = False  # our game already closed this visit (bust/checkout/3rd)
 
     def reset(self):
         self._recorded = 0
         self._closed = False
+        self._visit_done = False
 
     def on_message(self, msg, game):
         """Process one WS message against `game`. Returns the list of engine
@@ -148,18 +161,30 @@ class AutodartsConsumer:
         if event == "Manual reset" or n < self._recorded:   # new visit / reset
             self.reset()
 
-        if game is not None and len(throws) > self._recorded:
+        if game is None:
+            # No game yet — consume so a later new-game doesn't backfill these.
+            self._recorded = max(self._recorded, len(throws))
+            return results
+
+        if len(throws) > self._recorded:
             for t in throws[self._recorded:]:
+                if self._visit_done or game.over:
+                    continue          # visit already closed / match over — ignore
                 hit, pos = throw_to_hit(t)
-                if hit is not None:
-                    results.append(game.record_hit(hit, pos, confidence="confirmed"))
-                    print(f"[autodarts] {hit.label} ({hit.points})")
+                if hit is None:
+                    continue
+                ev = game.record_hit(hit, pos, confidence="confirmed")
+                results.append(ev)
+                print(f"[autodarts] {hit.label} ({hit.points})")
+                if ev.get("turn_over") or game.over:
+                    self._visit_done = True   # bust / 3rd dart / leg|match win
             self._recorded = len(throws)
 
         if event == "Takeout started" and not self._closed:
             self._closed = True
-            if game is not None and 0 < len(game.turn) < 3 and not game.over:
-                # genuinely short visit — advance it (trusted engine)
+            if (not self._visit_done and not game.over
+                    and 0 < len(game.turn) < 3):
+                # genuinely short visit (player stopped / bounce-out) — advance it
                 game.enter_review(reason="autodarts_short")
                 results.append(game.confirm_review())
         return results
