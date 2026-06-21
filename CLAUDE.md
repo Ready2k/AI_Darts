@@ -6,33 +6,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Darts scoring system using 3 USB cameras (indices 0, 1, 2) and computer vision. Two UIs exist: a legacy OpenCV GUI and a web UI (FastAPI backend + React frontend).
 
+## Repository layout
+
+All application Python lives in **`src/`** (a flat module set — `import detect`, `import game`, … all resolve because entry points run as `python3 src/<x>.py`, putting `src/` on `sys.path`). Run **everything from the repo root** so CWD-relative state files (`alignment.json`, `match_history.json`, `server_config.json`, `logs/`, …) resolve to the root.
+
+| Dir | Contents |
+|---|---|
+| `src/` | Application code: `server.py`, `detect.py`, `game.py`, `games.py`, `dartboard.py`, `align.py`, `menu.py`, `gui.py`, etc. |
+| `tests/` | Test suite. Each test prepends `../src` to `sys.path`; run from root as `python3 tests/test_x.py`. |
+| `scripts/` | Standalone utilities not imported by the app: `check_cameras.sh`, `reactivate_cameras.sh`, `generate_checkerboard.py`, `fix_rotation.py`. |
+| `docs/` | Printable assets (checkerboard PDFs). |
+| `frontend/` | React 19 + Vite web UI (unchanged). |
+| repo root | `start.sh` / `stop.sh` entry points, `README`/`LICENSE`/`CLAUDE.md`, and runtime state/config JSON. |
+
 ## Commands
 
 ```bash
-# Legacy OpenCV GUI (all-in-one launcher)
-./start.sh               # OpenCV menu
-./start.sh detect        # Dart detection + scoring
-./start.sh align         # Camera mesh alignment
-./start.sh cameras       # Live camera viewer
-./start.sh calibrate     # Checkerboard intrinsic calibration
-./start.sh calibrate-extrinsic
-./stop.sh                # Kill all running instances
+# Web UI — the primary path (start.sh runs the camera check, backend, frontend)
+./start.sh                               # check cameras → backend :8000 + frontend :5173
+./stop.sh                                # kill all running instances
 
-# Web UI (two terminals)
-python3 server.py                        # FastAPI backend on :8000
+# Web UI manual (two terminals)
+python3 src/server.py                    # FastAPI backend on :8000 (run from repo root)
 cd frontend && npm run dev               # Vite dev server on :5173
 cd frontend && npm run build
 cd frontend && npm run lint
 
-# Tests
-python3 test_game.py                     # X01 engine + checkout + hit detail + check-in
-python3 test_games.py                    # Cricket / ATC / Shanghai / Count Up / Killer + AI + master-in
-python3 test_autocal.py                  # ellipse auto-calibration
-python3 test_consensus.py                # multi-dart cross-camera tip clustering
-python3 test_line_tips.py                # shaft-line intersection tip localisation
-python3 test_autodarts_adapter.py        # Autodarts adapter notation + event parsing
-python3 test_replay_state.py             # state-machine replay harness
-python3 test_board_clear.py              # board-clear detection logic
+# Legacy OpenCV GUI launchers (open a window with Detect/Align/Cameras buttons)
+python3 src/menu.py                      # OpenCV menu
+python3 src/gui.py                       # CustomTkinter menu
+
+# Tests (run from repo root)
+python3 tests/test_game.py               # X01 engine + checkout + hit detail + check-in
+python3 tests/test_games.py              # Cricket / ATC / Shanghai / Count Up / Killer + AI + master-in
+python3 tests/test_autocal.py            # ellipse auto-calibration
+python3 tests/test_consensus.py          # multi-dart cross-camera tip clustering
+python3 tests/test_line_tips.py          # shaft-line intersection tip localisation
+python3 tests/test_autodarts_adapter.py  # Autodarts adapter notation + event parsing
+python3 tests/test_replay_state.py       # state-machine replay harness (needs debug_recordings/)
+python3 tests/test_board_clear.py        # board-clear detection logic (needs debug_recordings/)
 ```
 
 Dependencies: `opencv-python`, `numpy`, `fastapi`, `uvicorn`. The `say` macOS command is used for audio score announcements.
@@ -104,8 +116,8 @@ The adapter publishes board-manager status (`connected`, last `event`, `awaiting
 To develop without a real board: `mock_autodarts.py` replays a scripted 501 game on `:3180` using the exact captured schema.
 
 ```bash
-python3 mock_autodarts.py
-DETECTION_SOURCE=autodarts AUTODARTS_URL=ws://localhost:3180/api/events python3 server.py
+python3 src/mock_autodarts.py
+DETECTION_SOURCE=autodarts AUTODARTS_URL=ws://localhost:3180/api/events python3 src/server.py
 ```
 
 ### Line-based tip localisation (`line_tips.py`)
@@ -119,8 +131,8 @@ Replaces dual-endpoint clustering. Each camera's dart contour is fit to a **shaf
 `replay.py` — geometry-only replay: re-runs `detect_all_darts` + `find_tips_by_lines` on recorded frames to validate tip positions without the state machine.
 
 ```bash
-python3 replay_state.py <recording_dir>   # full state-machine replay
-python3 replay.py <recording_dir>         # geometry/tip validation only
+python3 src/replay_state.py <recording_dir>   # full state-machine replay
+python3 src/replay.py <recording_dir>         # geometry/tip validation only
 ```
 
 ### Cinematic game mode (`frontend/src/cinematic/`)

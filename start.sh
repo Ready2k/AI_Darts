@@ -7,14 +7,14 @@ echo "Checking for old processes..."
 "$SCRIPT_DIR/stop.sh"
 
 echo "Checking darts cameras..."
-if ! "$SCRIPT_DIR/check_cameras.sh"; then
+if ! "$SCRIPT_DIR/scripts/check_cameras.sh"; then
     echo "Camera check failed — not all 3 darts cameras are connected. Aborting startup."
     exit 1
 fi
 
 echo "Starting Backend (FastAPI)..."
 cd "$SCRIPT_DIR"
-python3 server.py &
+python3 src/server.py &
 BACKEND_PID=$!
 
 echo "Starting Frontend (Vite)..."

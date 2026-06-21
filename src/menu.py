@@ -26,7 +26,7 @@ RED     = (60,  60, 220)
 
 
 def alignment_status():
-    p = SCRIPT_DIR / "alignment.json"
+    p = SCRIPT_DIR.parent / "alignment.json"
     if not p.exists():
         return "No alignment — run Align Cameras first", AMBER
     try:

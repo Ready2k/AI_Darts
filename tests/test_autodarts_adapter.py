@@ -5,7 +5,8 @@
 Run:  python3 test_autodarts_adapter.py
 """
 
-import sys
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from game import X01Game
 import autodarts_adapter as ad

@@ -196,7 +196,7 @@ class App(ctk.CTk):
 
     # --- Logic ---
     def update_status(self):
-        p = SCRIPT_DIR / "alignment.json"
+        p = SCRIPT_DIR.parent / "alignment.json"
         if not p.exists():
             self.lbl_status.configure(text="Status: No alignment — run Align Cameras first", text_color=self.accent_cyan)
         else:

@@ -1,5 +1,8 @@
 """Synthetic test for ellipse-based auto-calibration. Run: python3 test_autocal.py"""
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
 import math
 import cv2
 import numpy as np

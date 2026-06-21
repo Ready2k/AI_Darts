@@ -6,6 +6,9 @@ optical validation (flight-end rejection on actual footage) is done by replay
 against recorded matches, not here.
 """
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
 import math
 from line_tips import find_tips_by_lines
 

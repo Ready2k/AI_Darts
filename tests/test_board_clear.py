@@ -22,6 +22,9 @@ settling BELOW the darts-in level. These tests:
 Run: python3 test_board_clear.py
 """
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
 import json
 from pathlib import Path
 

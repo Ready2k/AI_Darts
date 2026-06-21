@@ -12,11 +12,11 @@ kept SMALL (a couple of seconds of footage) so the suite stays fast.
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from replay_state import StateReplay
 
-REC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_recordings")
+REC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "debug_recordings")
 
 _passed = 0
 _failed = 0

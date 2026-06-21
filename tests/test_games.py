@@ -1,5 +1,8 @@
 """Tests for the alternative game modes (games.py) + X01 master-in."""
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
 from dartboard import Hit
 import games
 import game as x01

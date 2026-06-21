@@ -3,6 +3,9 @@
 Run:  python3 test_game.py
 """
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
 import dartboard
 import checkout
 from game import X01Game
