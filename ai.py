@@ -104,47 +104,70 @@ async def ai_loop():
     Background loop that continually watches the game.
     If it's an AI's turn, it throws a dart.
     """
-    print("AI loop started")
+    print("[AI] Loop started")
+    last_player_id = None   # detect when the active player changes (turn handover)
+    stepped_up = False      # have we done the once-per-visit "step up to the oche" pause?
     while True:
-        await asyncio.sleep(0.5)
-        
-        with detect.GAME_LOCK:
-            game = detect.GAME
-            if not game or game.over:
-                continue
-            
-            # Re-check inside lock if it's AI's turn
-            if not game.player.is_ai:
-                continue
+        try:
+            await asyncio.sleep(0.5)
 
-            # Don't throw until the human's darts have been physically
-            # removed from the board.  When a turn ends the engine advances
-            # to the AI immediately, but detection is still in 'all_done'
-            # waiting for the board to be cleared — throwing now is way too
-            # quick.  Wait for the board to clear (awaiting_clear -> False).
-            if detect.STATUS.get("awaiting_clear"):
-                continue
+            with detect.GAME_LOCK:
+                game = detect.GAME
+                if not game or game.over:
+                    continue
 
-            # Ensure turn isn't over just in case
-            if game.darts_left <= 0:
-                continue
+                # Reset the step-up pause whenever the active player changes
+                # (human <-> AI handover, or AI <-> AI), so each fresh AI visit
+                # gets exactly one step-up delay.
+                pid = id(game.player)
+                if pid != last_player_id:
+                    last_player_id = pid
+                    stepped_up = False
 
-            level = game.player.ai_level
+                # Re-check inside lock if it's AI's turn
+                if not game.player.is_ai:
+                    continue
 
-        # Outside the lock, wait a realistic time
-        delay = random.uniform(0.8, 1.8)
-        await asyncio.sleep(delay)
+                # Don't throw until the human's darts have been physically
+                # removed from the board.  When a turn ends the engine advances
+                # to the AI immediately, but detection is still in 'all_done'
+                # waiting for the board to be cleared — throwing now is way too
+                # quick.  Wait for the board to clear (awaiting_clear -> False).
+                if detect.STATUS.get("awaiting_clear"):
+                    continue
 
-        with detect.GAME_LOCK:
-            # Check state again after sleep in case game was reset,
-            # or human undid a dart, or match ended.
-            game = detect.GAME
-            if not game or game.over:
-                continue
-            if not game.player.is_ai:
-                continue
-            if game.darts_left <= 0:
-                continue
+                # Ensure turn isn't over just in case
+                if game.darts_left <= 0:
+                    continue
 
-            execute_ai_throw(game, level)
-            detect.STATUS["game_gen"] += 1
+                level = game.player.ai_level
+                need_step_up = not stepped_up
+
+            # Once per visit, after the board is clear, pause ~2s to mimic the
+            # player walking up to the oche before their first dart.
+            if need_step_up:
+                await asyncio.sleep(2.0)
+                stepped_up = True
+
+            # Outside the lock, wait a realistic per-dart aiming time
+            delay = random.uniform(0.8, 1.8)
+            await asyncio.sleep(delay)
+
+            with detect.GAME_LOCK:
+                # Check state again after sleep in case game was reset,
+                # or human undid a dart, or match ended.
+                game = detect.GAME
+                if not game or game.over:
+                    continue
+                if not game.player.is_ai:
+                    continue
+                if game.darts_left <= 0:
+                    continue
+
+                execute_ai_throw(game, level)
+                detect.STATUS["game_gen"] += 1
+        except Exception as e:
+            import traceback
+            print(f"[AI] Error in ai_loop: {e}")
+            traceback.print_exc()
+            await asyncio.sleep(2.0)

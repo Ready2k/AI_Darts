@@ -40,7 +40,7 @@ def _save_config(data):
 
 _file_cfg = _load_config()
 DETECTION_SOURCE = os.environ.get(
-    "DETECTION_SOURCE", _file_cfg.get("detection_source", "detect")
+    "DETECTION_SOURCE", _file_cfg.get("detection_source", "autodarts")
 ).lower()
 AUTODARTS_URL = os.environ.get(
     "AUTODARTS_URL", _file_cfg.get("autodarts_url", "ws://localhost:3180/api/events")
@@ -289,6 +289,24 @@ def end_game():
         detect.GAME = None
     detect.STATUS["game_gen"] += 1
     detect.dbg.stop()
+    return {"ok": True}
+
+
+@app.post("/api/shutdown")
+async def shutdown():
+    """Abandon the current game and stop the server process entirely."""
+    with detect.GAME_LOCK:
+        detect.GAME = None
+    detect.STATUS["game_gen"] += 1
+    await run_in_threadpool(detect.stop_detection)
+    detect.dbg.stop()
+
+    # Defer the actual exit so this response can be flushed to the client first.
+    async def _stop():
+        await asyncio.sleep(0.3)
+        os._exit(0)
+
+    asyncio.create_task(_stop())
     return {"ok": True}
 
 

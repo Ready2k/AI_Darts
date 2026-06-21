@@ -1,0 +1,4 @@
+{
+  "detection_source": "autodarts",
+  "autodarts_url": "ws://localhost:3180/api/events"
+}

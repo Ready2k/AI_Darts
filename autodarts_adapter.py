@@ -203,6 +203,10 @@ def _apply_to_shared_game(consumer, msg):
         if detect.GAME is None:
             return
         consumer.on_message(msg, detect.GAME)
+    # Mirror the board's physical state into STATUS so the AI loop waits for the
+    # human's darts to be pulled (Takeout) before it steps up. There are darts in
+    # the board once this visit has recorded a throw and no takeout has been seen.
+    detect.STATUS["awaiting_clear"] = (consumer._recorded > 0 and not consumer._closed)
 
 
 async def run(url, on_message=None, retry_secs=3.0):

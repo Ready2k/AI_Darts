@@ -28,6 +28,10 @@ cd frontend && npm run lint
 python3 test_game.py                     # game engine + checkout + hit detail
 python3 test_autocal.py                  # ellipse auto-calibration
 python3 test_consensus.py                # multi-dart cross-camera tip clustering
+python3 test_line_tips.py                # shaft-line intersection tip localisation
+python3 test_autodarts_adapter.py        # Autodarts adapter notation + event parsing
+python3 test_replay_state.py             # state-machine replay harness
+python3 test_board_clear.py              # board-clear detection logic
 ```
 
 Dependencies: `opencv-python`, `numpy`, `fastapi`, `uvicorn`. The `say` macOS command is used for audio score announcements.
@@ -86,6 +90,46 @@ Detection works in a **canonical board space**: a 500×500px image where the cen
 | `board_config.json` | `rotation_deg` offset (legacy — currently unused; board orientation is encoded in the alignment homographies) |
 | `match_history.json` | Completed matches (winner, players, legs/sets, averages) |
 | `darts.log` | Session log (stdout tee'd here during detection) |
+
+### Autodarts adapter (pluggable detection engine)
+
+`autodarts_adapter.py` skins the **Autodarts local board manager** (`:3180` WebSocket) as the detection engine, feeding each dart event into `detect.GAME` so the frontend and cinematic UI work unchanged. The `DETECTION_SOURCE` env var switches between `native` (our CV) and `autodarts`. The WS message schema (`/api/events`) was captured live from board manager v1.0.7; `_parse_message()` is the only place that knows the wire format — everything downstream uses `notation_to_hit()` which is unit-tested in `test_autodarts_adapter.py`.
+
+To develop without a real board: `mock_autodarts.py` replays a scripted 501 game on `:3180` using the exact captured schema.
+
+```bash
+python3 mock_autodarts.py
+DETECTION_SOURCE=autodarts AUTODARTS_URL=ws://localhost:3180/api/events python3 server.py
+```
+
+### Line-based tip localisation (`line_tips.py`)
+
+Replaces dual-endpoint clustering. Each camera's dart contour is fit to a **shaft line**; the line is warped into canonical board space via the alignment homography. Because a homography maps lines to lines and maps the on-board tip pixel correctly (the flight end is ~10 cm off-plane and warps differently per camera), the **intersection of the warped shaft lines from all cameras is the true tip** — no endpoint ambiguity, no flight-end phantoms. Unit-tested in `test_line_tips.py`.
+
+### Replay rigs (`replay.py`, `replay_state.py`)
+
+`replay_state.py` — the authoritative offline test harness. Feeds a `debug_recorder.py` recording through the **same** `detect.step_tracker` function the live loop calls, so the full scoring state machine (pending/confirm/bust/board-clear) can be reproduced and diagnosed without cameras. Frame rate caveat: recorder throttles to ~15 fps vs live ~30 fps, so per-frame counters advance at half rate.
+
+`replay.py` — geometry-only replay: re-runs `detect_all_darts` + `find_tips_by_lines` on recorded frames to validate tip positions without the state machine.
+
+```bash
+python3 replay_state.py <recording_dir>   # full state-machine replay
+python3 replay.py <recording_dir>         # geometry/tip validation only
+```
+
+### Cinematic game mode (`frontend/src/cinematic/`)
+
+Broadcast-style overlay for live 2-player games driven entirely by WebSocket game state. Key files:
+- `CinematicGame.jsx` — live game driver; maps `useGame()` state to the broadcast `pl` player shape, manages walk-on card sequencing and throw animations
+- `CinematicDemo.jsx` — canned scripted final (no live WS needed) for demos
+- `broadcastParts.jsx` — shared presentational components: `WalkOnCard`, `SideChar` (caricature flanking panels), lower-third score `Panel`, `BroadcastBoard`
+- `audio.js` — sound effects keyed by game event
+
+Player avatars are configured in `frontend/src/config/avatars.js`; caricature SVG art lives in `frontend/src/art/`.
+
+### AI player simulation (`ai.py`)
+
+`simulate_throw(label, level)` adds Gaussian spread (σ configurable per `LEVEL_SPREAD` dict) to an ideal target coordinate and returns a `Hit`. Used to simulate AI opponents in cinematic demo mode. Three levels: `Beginner` (σ=45 mm), `Semi Pro` (σ=15 mm), `Pro` (σ=6 mm).
 
 ### Detection tuning constants (top of `detect.py`)
 

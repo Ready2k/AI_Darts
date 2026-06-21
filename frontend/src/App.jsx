@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Settings, LineChart, Target, Camera, Crosshair,
   Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star,
-  Maximize2, Minimize2, Menu, ChevronLeft
+  Maximize2, Minimize2, Menu, ChevronLeft, Power
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell
@@ -363,6 +363,8 @@ function StreamViewer({ scriptName }) {
 
 function GameControls({ onRefresh, onNewGame }) {
   const [confirmEnd, setConfirmEnd] = useState(false)
+  const [confirmExit, setConfirmExit] = useState(false)
+  const [exiting, setExiting] = useState(false)
 
   const undo = async () => {
     await fetch(`${API_URL}/game/undo`, { method: 'POST' }).catch(() => {})
@@ -372,6 +374,12 @@ function GameControls({ onRefresh, onNewGame }) {
     await fetch(`${API_URL}/game/end`, { method: 'POST' }).catch(() => {})
     setConfirmEnd(false)
     onRefresh?.()
+  }
+  const exitApp = async () => {
+    setExiting(true)
+    // Fire-and-forget: the server exits before it can reply, so the fetch
+    // rejecting is the expected "success" path.
+    await fetch(`${API_URL}/shutdown`, { method: 'POST' }).catch(() => {})
   }
 
   return (
@@ -406,6 +414,25 @@ function GameControls({ onRefresh, onNewGame }) {
             <Check className="w-4 h-4" /> Confirm end
           </button>
           <button onClick={() => setConfirmEnd(false)} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 text-sm font-semibold transition-colors">
+            <X className="w-4 h-4" /> Cancel
+          </button>
+        </div>
+      )}
+
+      {exiting ? (
+        <div className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/15 border border-red-400/30 text-red-200 text-sm font-semibold">
+          <Power className="w-4 h-4" /> Shutting down…
+        </div>
+      ) : !confirmExit ? (
+        <button onClick={() => setConfirmExit(true)} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-400/30 text-white/50 hover:text-red-300 text-sm font-semibold transition-colors">
+          <Power className="w-4 h-4" /> Exit &amp; stop server
+        </button>
+      ) : (
+        <div className="flex gap-2">
+          <button onClick={exitApp} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-sm font-semibold transition-colors">
+            <Power className="w-4 h-4" /> Confirm exit
+          </button>
+          <button onClick={() => setConfirmExit(false)} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 text-sm font-semibold transition-colors">
             <X className="w-4 h-4" /> Cancel
           </button>
         </div>
@@ -803,7 +830,7 @@ function ReviewModal({ game }) {
 // ── Detection source config (Settings) ─────────────────────────────────────
 function useConfig() {
   const [config, setConfig] = useState({
-    source: 'detect', autodarts_url: 'ws://localhost:3180/api/events',
+    source: 'autodarts', autodarts_url: 'ws://localhost:3180/api/events',
     autodarts_connected: false,
   })
 
