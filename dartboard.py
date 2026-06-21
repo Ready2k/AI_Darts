@@ -32,6 +32,16 @@ def is_double(hit):
     return hit.ring in DOUBLE_OUT_RINGS
 
 
+def is_triple(hit):
+    """True if this hit is a treble."""
+    return hit.ring == "TRIPLE"
+
+
+def is_master(hit):
+    """True if this hit may open/finish a master-in/master-out leg (double or treble)."""
+    return is_double(hit) or is_triple(hit)
+
+
 def score_detail(x_mm, y_mm):
     """
     Score a dart at (x_mm, y_mm) relative to bull centre and return a full Hit.

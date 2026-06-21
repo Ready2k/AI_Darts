@@ -161,9 +161,19 @@ function GameSetup({ onStarted }) {
   const [gameMode, setGameMode] = useState('501')
   const [startScore, setStartScore] = useState(501)
   const [doubleOut, setDoubleOut] = useState(true)
+  const [checkIn, setCheckIn] = useState('straight')  // straight | double | master
+  const [rounds, setRounds] = useState(8)
+  const [lives, setLives] = useState(3)
+  const [killerIn, setKillerIn] = useState('marks')  // marks (Standard) | double (Hard)
   const [legs, setLegs] = useState(3)
   const [debug, setDebug] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  const X01_MODES = ['301', '501', '701']
+  const ALT_MODES = ['Cricket', 'Around the Clock', 'Shanghai', 'Count Up', 'Killer']
+  const isX01 = X01_MODES.includes(gameMode)
+  const usesRounds = gameMode === 'Count Up' || gameMode === 'Shanghai'
+  const usesLives = gameMode === 'Killer'
 
   const setPlayerName = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, name: v } : p)))
   const setPlayerAvatar = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, avatar: v } : p)))
@@ -184,14 +194,24 @@ function GameSetup({ onStarted }) {
       await fetch(`${API_URL}/game/new`, {
         method: 'POST', headers: JSON_HEADERS,
         body: JSON.stringify({
-          players: playerConfigs, start_score: startScore, double_in: false,
-          double_out: doubleOut, legs_to_win: legs, sets_to_win: 1, debug,
+          players: playerConfigs,
+          mode: isX01 ? 'X01' : gameMode,
+          start_score: startScore,
+          check_in: isX01 ? checkIn : 'straight',
+          double_in: isX01 && checkIn !== 'straight',
+          double_out: doubleOut,
+          rounds: usesRounds ? rounds : null,
+          lives: usesLives ? lives : null,
+          killer_in: usesLives ? killerIn : null,
+          legs_to_win: legs, sets_to_win: 1, debug,
         }),
       })
-      
+
       const pMap = {}
       players.forEach(p => pMap[p.name] = p.avatar)
-      onStarted?.(pMap)
+      // Anything other than plain 301/501 launches straight into cinematic mode.
+      const forceCinematic = !['301', '501'].includes(gameMode)
+      onStarted?.(pMap, { forceCinematic })
     } finally { setBusy(false) }
   }
 
@@ -199,42 +219,106 @@ function GameSetup({ onStarted }) {
     <div className="max-w-xl w-full mx-auto space-y-6 p-8">
       <div>
         <label className="text-xs uppercase tracking-widest text-white/40">Game Type</label>
-        <div className="flex gap-2 mt-2">
-          {['301', '501', '701', 'Cricket'].map(mode => (
+        <div className="grid grid-cols-3 gap-2 mt-2">
+          {[...X01_MODES, ...ALT_MODES].map(mode => (
             <button key={mode} onClick={() => {
               setGameMode(mode);
-              if (mode !== 'Cricket') setStartScore(parseInt(mode, 10));
+              if (X01_MODES.includes(mode)) setStartScore(parseInt(mode, 10));
             }}
-              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${
-                gameMode === mode 
-                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' 
+              className={`py-2.5 rounded-xl text-sm font-semibold border transition-all ${
+                gameMode === mode
+                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]'
                   : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
               }`}>
               {mode}
             </button>
           ))}
         </div>
-        {gameMode === 'Cricket' && (
-          <div className="mt-3 text-xs text-amber-400/80 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
-            Cricket is currently in development. Please select an X01 game mode.
+        {!['301', '501'].includes(gameMode) && (
+          <div className="mt-3 text-xs text-amber-300/80 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 flex items-center gap-2">
+            <Star className="w-3.5 h-3.5 shrink-0" /> {gameMode} launches in Cinematic broadcast mode.
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-xs uppercase tracking-widest text-white/40">Out Rule</label>
-          <div className="flex gap-2 mt-2">
-            <button onClick={() => setDoubleOut(false)}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                !doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
-              }`}>Straight Out</button>
-            <button onClick={() => setDoubleOut(true)}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
-              }`}>Double Out</button>
+      {isX01 && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs uppercase tracking-widest text-white/40">Check-In</label>
+            <div className="flex gap-2 mt-2">
+              {[['straight', 'Straight'], ['double', 'Double'], ['master', 'Master']].map(([v, lbl]) => (
+                <button key={v} onClick={() => setCheckIn(v)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    checkIn === v ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                  }`}>{lbl}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-widest text-white/40">Out Rule</label>
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setDoubleOut(false)}
+                className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                  !doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                }`}>Straight</button>
+              <button onClick={() => setDoubleOut(true)}
+                className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                  doubleOut ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                }`}>Double</button>
+            </div>
           </div>
         </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
+        {usesRounds && (
+          <div>
+            <label className="text-xs uppercase tracking-widest text-white/40">Rounds</label>
+            <div className="flex gap-2 mt-2">
+              {(gameMode === 'Shanghai' ? [7, 10, 20] : [5, 8, 10]).map(r => (
+                <button key={r} onClick={() => setRounds(r)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    rounds === r ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                  }`}>{r}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {usesLives && (
+          <div>
+            <label className="text-xs uppercase tracking-widest text-white/40">Lives</label>
+            <div className="flex gap-2 mt-2">
+              {[3, 5, 7].map(l => (
+                <button key={l} onClick={() => setLives(l)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    lives === l ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                  }`}>{l}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {usesLives && (
+          <div>
+            <label className="text-xs uppercase tracking-widest text-white/40">Arm to Start</label>
+            <div className="flex gap-2 mt-2">
+              {[['marks', 'Standard'], ['double', 'Hard']].map(([v, lbl]) => (
+                <button key={v} onClick={() => setKillerIn(v)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    killerIn === v ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.15)]' : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                  }`}>{lbl}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {usesLives && (
+          <div className="col-span-2 text-xs text-white/40 bg-white/5 p-2.5 rounded-xl border border-white/5">
+            Each player is auto-assigned a number (20, 19, 18…).
+            {killerIn === 'double'
+              ? ' Hard: arm by hitting your own DOUBLE.'
+              : ' Standard: arm with 3 hits on your number (treble arms at once).'}
+            {' '}Then knock out the rest. Best with 3+ players.
+          </div>
+        )}
         <div>
           <label className="text-xs uppercase tracking-widest text-white/40">Legs to Win</label>
           <div className="flex gap-2 mt-2">
@@ -311,7 +395,7 @@ function GameSetup({ onStarted }) {
         </span>
       </button>
 
-      <button onClick={start} disabled={busy || gameMode === 'Cricket'}
+      <button onClick={start} disabled={busy}
         className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500/30 to-fuchsia-500/30 hover:from-cyan-500/40 hover:to-fuchsia-500/40 border border-cyan-400/30 font-semibold tracking-wide disabled:opacity-50">
         <Check className="w-5 h-5" /> Start game
       </button>
@@ -828,6 +912,24 @@ function ReviewModal({ game }) {
 }
 
 // ── Detection source config (Settings) ─────────────────────────────────────
+// Map the board manager's latest event + clear state to a friendly status chip.
+function boardStatus(config) {
+  const ev = (config.board_event || '').toLowerCase()
+  if (ev.includes('takeout') || ev.includes('take out')) {
+    return { label: 'Take out in progress', dot: 'bg-amber-400', cls: 'border-amber-400/30 bg-amber-500/10 text-amber-200', pulse: true }
+  }
+  if (ev.includes('throw')) {
+    return { label: 'Throw detected', dot: 'bg-cyan-400', cls: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200', pulse: true }
+  }
+  if (ev.includes('reset')) {
+    return { label: 'Board reset', dot: 'bg-white/50', cls: 'border-white/15 bg-white/5 text-white/70', pulse: false }
+  }
+  if (config.awaiting_clear) {
+    return { label: 'Waiting for board to clear', dot: 'bg-amber-400', cls: 'border-amber-400/30 bg-amber-500/10 text-amber-200', pulse: true }
+  }
+  return { label: 'Ready — waiting for throw', dot: 'bg-emerald-400', cls: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200', pulse: false }
+}
+
 function useConfig() {
   const [config, setConfig] = useState({
     source: 'autodarts', autodarts_url: 'ws://localhost:3180/api/events',
@@ -840,10 +942,11 @@ function useConfig() {
 
   useEffect(() => {
     refresh()
-    // Poll connection status every 5 s when on autodarts source.
+    // Poll connection + board-manager activity. Fast enough to feel live
+    // (throw / take-out states change quickly).
     const t = setInterval(() => {
       fetch(`${API_URL}/config`).then(r => r.json()).then(setConfig).catch(() => {})
-    }, 5000)
+    }, 1500)
     return () => clearInterval(t)
   }, [refresh])
 
@@ -930,7 +1033,7 @@ function CinematicToggle({ on, onChange, disabled = false }) {
     <button
       onClick={() => !disabled && onChange(!on)}
       disabled={disabled}
-      title={disabled ? 'Cinematic mode needs a 2-player game' : undefined}
+      title={disabled ? 'Start a game to enable cinematic mode' : undefined}
       className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all ${
         disabled
           ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
@@ -994,6 +1097,9 @@ function App() {
   const [animatingTurn, setAnimatingTurn] = useState(null)
   const [displayedGame, setDisplayedGame] = useState(game)
   const uiGame = displayedGame || game
+  // Latest mode, read by the animation-driven sound effect without re-subscribing.
+  const gameModeRef = useRef(uiGame?.mode)
+  useEffect(() => { gameModeRef.current = uiGame?.mode }, [uiGame?.mode])
 
   // Dart detection via dart_seq (monotonic) rather than turn.length so that
   // the 3rd dart of a visit is detected even after game.turn has reset to [].
@@ -1017,14 +1123,24 @@ function App() {
       // turn resets to [] in the backend on turn completion, so an empty turn
       // with a non-empty display_turn means the visit just finished.
       const turnOver = (capturedGame.turn?.length ?? 1) === 0
+      const isX01 = (capturedGame.mode ?? 'X01') === 'X01'
       if (turnOver && dispTurn.length > 0) {
         const visitTotal = dispTurn.reduce((sum, d) => sum + (d.points || 0), 0)
         const isBust = capturedGame.message?.includes('BUST') ?? false
         const isLegWon = capturedGame.message?.includes('wins') ?? false
-        pendingAnnouncement.current = {
-          text: visitTotalToSpeech(visitTotal, { bust: isBust, legWon: isLegWon }),
-          visitTotal,
-          legWon: isLegWon,
+        if (isX01) {
+          // In X01 the visit total IS the score, so call it out.
+          pendingAnnouncement.current = {
+            text: visitTotalToSpeech(visitTotal, { bust: isBust, legWon: isLegWon }),
+            visitTotal,
+            legWon: isLegWon,
+          }
+        } else if (isLegWon || capturedGame.over) {
+          // Other modes: the dart face-values aren't the score, so never read
+          // the total out — only celebrate the game shot.
+          pendingAnnouncement.current = { text: 'Game shot!', visitTotal: 0, legWon: true }
+        } else {
+          pendingAnnouncement.current = null
         }
       } else {
         pendingAnnouncement.current = null
@@ -1045,6 +1161,11 @@ function App() {
     } else if (nextSeq < prevSeq) {
       // Undo or game reset
       setTimeout(() => { setAnimatingTurn(null); setDisplayedGame(game) }, 0)
+    } else if (game !== displayedGame) {
+      // Same dart_seq but the game object changed — a non-dart state update such
+      // as Killer numbers being assigned in the spin phase, or a config tweak.
+      // No animation involved, so just sync it straight through.
+      setTimeout(() => setDisplayedGame(game), 0)
     }
     // Player changes are handled automatically via setDisplayedGame(game) in onScored
   }, [game, triggerThrow, displayedGame])
@@ -1062,7 +1183,9 @@ function App() {
   // Sound effects tied to the throw animation lifecycle
   useEffect(() => {
     if (animState === ThrowState.THROWING) {
-      sound.whoosh()
+      // Killer darts are "fired" — a gunshot instead of the usual whoosh.
+      if (gameModeRef.current === 'Killer') sound.gunshot()
+      else sound.whoosh()
     } else if (animState === ThrowState.IMPACT) {
       sound.thud()
     } else if (animState === ThrowState.SCORING && currentDart) {
@@ -1173,15 +1296,21 @@ function App() {
           )}
 
           {activeTab === 'Live Track' && (
-            cinematicMode && hasGame(uiGame) && uiGame.players?.length === 2 ? (
+            cinematicMode && hasGame(uiGame) && uiGame.players?.length >= 1 ? (
               <div className="h-full">
                 <CinematicGame
                   game={uiGame}
                   avatarMap={avatarMap}
                   animState={animState}
                   boardDarts={animatingTurn ?? uiGame?.turn}
-                  cameraSrc={`${API_URL}/stream/detect`}
+                  cameraSrc={config.source === 'autodarts' ? null : `${API_URL}/stream/detect`}
                   onExit={() => setCinematic(false)}
+                  onAssignNumbers={(numbers) =>
+                    fetch(`${API_URL}/game/killer/numbers`, {
+                      method: 'POST', headers: JSON_HEADERS,
+                      body: JSON.stringify({ numbers }),
+                    }).catch(() => {})
+                  }
                 />
               </div>
             ) : (
@@ -1190,7 +1319,7 @@ function App() {
                   <CinematicToggle
                     on={cinematicMode}
                     onChange={setCinematic}
-                    disabled={!hasGame(uiGame) || uiGame.players?.length !== 2}
+                    disabled={!hasGame(uiGame)}
                   />
                 </div>
                 <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 min-h-0">
@@ -1206,20 +1335,28 @@ function App() {
                   <div className="flex flex-col space-y-4 overflow-auto">
                     <Scoreboard game={uiGame} avatarMap={avatarMap} />
                     {hasGame(uiGame) && <GameControls onRefresh={refresh} onNewGame={() => setActiveTab('Settings')} />}
-                    <div className="flex-1 min-h-[300px]">
+                    <div className={config.source === 'autodarts' ? '' : 'flex-1 min-h-[300px]'}>
                       {config.source === 'autodarts' ? (
-                        <div className="w-full h-full rounded-xl bg-black/30 border border-white/10 p-5 flex flex-col gap-3">
-                          <div className="text-xs uppercase tracking-widest text-white/40">Board Manager</div>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${config.autodarts_connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400/70'}`} />
-                            <span className={`text-sm font-semibold ${config.autodarts_connected ? 'text-emerald-300' : 'text-red-400/80'}`}>
-                              {config.autodarts_connected ? 'Connected' : 'Not connected'}
+                        <div className="w-full rounded-xl bg-black/30 border border-white/10 px-4 py-3 flex flex-col gap-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs uppercase tracking-widest text-white/40">Board Manager</span>
+                            <span className="flex items-center gap-1.5">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${config.autodarts_connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400/70'}`} />
+                              <span className={`text-xs font-semibold ${config.autodarts_connected ? 'text-emerald-300' : 'text-red-400/80'}`}>
+                                {config.autodarts_connected ? 'Connected' : 'Not connected'}
+                              </span>
                             </span>
                           </div>
-                          <p className="text-xs text-white/40 font-mono break-all">{config.autodarts_url}</p>
-                          <p className="text-xs text-white/30 mt-auto">
-                            Detection is handled by the Autodarts board manager. Camera controls are in the board manager UI.
-                          </p>
+                          {config.autodarts_connected && (() => {
+                            const s = boardStatus(config)
+                            return (
+                              <div className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${s.cls}`}>
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot} ${s.pulse ? 'animate-pulse' : ''}`} />
+                                <span className="text-sm font-semibold">{s.label}</span>
+                              </div>
+                            )
+                          })()}
+                          <p className="text-[11px] text-white/30 font-mono break-all">{config.autodarts_url}</p>
                         </div>
                       ) : (
                         <StreamPanel script="detect" label="detection"
@@ -1296,7 +1433,7 @@ function App() {
                 <CinematicToggle on={cinematicMode} onChange={setCinematic} />
               </div>
               <DetectionConfig config={config} onSave={saveConfig} />
-              <GameSetup onStarted={(pMap) => { setAvatarMap(pMap); setAutoStartDetect(true); refresh(); setActiveTab('Live Track') }} />
+              <GameSetup onStarted={(pMap, opts) => { setAvatarMap(pMap); setAutoStartDetect(true); if (opts?.forceCinematic) setCinematic(true); refresh(); setActiveTab('Live Track') }} />
             </div>
           )}
         </div>

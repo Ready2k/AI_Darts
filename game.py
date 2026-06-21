@@ -12,7 +12,7 @@ Designed to be driven by detect.py and serialised to JSON for the web UI.
 import copy
 
 import checkout as checkout_mod
-from dartboard import Hit, is_double
+from dartboard import Hit, is_double, is_master
 
 
 class Player:
@@ -50,11 +50,16 @@ class Player:
 class X01Game:
     def __init__(self, player_names, start_score=501,
                  double_in=False, double_out=True,
-                 legs_to_win=1, sets_to_win=1):
+                 legs_to_win=1, sets_to_win=1, check_in=None):
         if not player_names:
             raise ValueError("need at least one player")
         self.start_score = start_score
-        self.double_in   = double_in
+        # check_in: "straight" | "double" | "master". Back-compat: an explicit
+        # double_in=True with no check_in means double-in.
+        if check_in is None:
+            check_in = "double" if double_in else "straight"
+        self.check_in    = check_in
+        self.double_in   = (check_in != "straight")
         self.double_out  = double_out
         self.legs_to_win = legs_to_win
         self.sets_to_win = sets_to_win
@@ -136,13 +141,14 @@ class X01Game:
         self._push_undo()
         p = self.player
 
-        # Double-in: darts before the opening double score nothing.
+        # Check-in: darts before the required opening hit score nothing.
         if self.double_in and not p.opened:
-            if is_double(hit):
+            if self._opens(hit):
                 p.opened = True
             else:
+                need = "treble/double" if self.check_in == "master" else "double"
                 return self._finish_dart(hit, position, bust=False, scored=False,
-                                         message=f"{hit.label} (needs double to start)",
+                                         message=f"{hit.label} (needs {need} to start)",
                                          confidence=confidence)
 
         new_remaining = p.score - hit.points
@@ -236,6 +242,12 @@ class X01Game:
     def last_hit_placeholder(self):
         """A minimal Hit for confirm_review's event (no new dart was thrown)."""
         return Hit(0, self.last_dart_label or "-", "MISS", 0, 1)
+
+    def _opens(self, hit):
+        """Does this hit satisfy the check-in (opening) requirement?"""
+        if self.check_in == "master":
+            return is_master(hit)
+        return is_double(hit)   # "double"
 
     def _is_bust(self, new_remaining, hit):
         if self.double_out:
@@ -407,8 +419,14 @@ class X01Game:
         t_conf = list(self.turn_conf) + [None] * (len(self.turn) - len(self.turn_conf))
         d_conf = list(disp_conf) + [None] * (len(disp_turn) - len(disp_conf))
         return {
+            "mode": "X01",
+            "mode_label": f"{self.start_score} · " + {
+                "straight": "Straight in", "double": "Double in",
+                "master": "Master in"}.get(self.check_in, "Straight in")
+                + (" · Double out" if self.double_out else " · Straight out"),
             "start_score": self.start_score,
             "double_in": self.double_in,
+            "check_in": self.check_in,
             "double_out": self.double_out,
             "legs_to_win": self.legs_to_win,
             "sets_to_win": self.sets_to_win,

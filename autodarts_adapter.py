@@ -32,12 +32,42 @@ import argparse
 import json
 import re
 import sys
+import time
 
 import dartboard
 
 # Set to True while the websocket worker is connected, False otherwise.
 # Polled by GET /api/config to surface board-manager status in the UI.
 CONNECTED = False
+
+# Latest board-manager activity, surfaced via GET /api/config so the UI can show
+# "Throw detected" / "Takeout in progress" etc. Updated on every state message.
+LAST_EVENT = ""
+
+
+def _publish(awaiting_takeout=False):
+    """Mirror the board-manager status into detect.STATUS so it rides along on the
+    game-state WS to the cinematic UI (not just the polled /api/config).
+
+    `ts` is the (whole-second) wall-clock time the status LAST CHANGED — not the
+    last message — so it isn't rewritten on every streamed frame. That keeps the
+    game-state WS quiet (no per-frame rebroadcast / animation churn) and lets the
+    UI read `ts` as 'how long the board has sat in this state' to flag a stuck
+    board (e.g. stuck mid-takeout)."""
+    try:
+        import detect
+        prev = detect.STATUS.get("autodarts") or {}
+        changed = (prev.get("connected") != CONNECTED
+                   or prev.get("event") != LAST_EVENT
+                   or prev.get("awaiting_takeout") != bool(awaiting_takeout))
+        detect.STATUS["autodarts"] = {
+            "connected": CONNECTED,
+            "event": LAST_EVENT,
+            "awaiting_takeout": bool(awaiting_takeout),
+            "ts": int(time.time()) if (changed or not prev.get("ts")) else prev["ts"],
+        }
+    except Exception:
+        pass
 
 # ── score notation → Hit ───────────────────────────────────────────────────────
 
@@ -55,6 +85,10 @@ def notation_to_hit(s):
     if s in ("OUTER", "SBULL", "B25", "25", "OB"):
         return dartboard.Hit(25, "Bull", "OUTER_BULL", 25, 1)
     if s in ("MISS", "OUT", "M", "0", ""):
+        return dartboard.Hit(0, "Miss", "MISS", 0, 1)
+    # A board miss near a segment is reported as "M<n>" (e.g. M5 = missed by 5).
+    # The segment is just *where* it landed off-board; it still scores 0.
+    if s.startswith("M") and s[1:].isdigit():
         return dartboard.Hit(0, "Miss", "MISS", 0, 1)
     m = _NOTATION.match(s)
     if not m:
@@ -161,6 +195,10 @@ class AutodartsConsumer:
         throws = d.get("throws") or []
         n = d.get("numThrows", len(throws))
 
+        global LAST_EVENT
+        if event:
+            LAST_EVENT = event
+
         if event == "Manual reset" or n < self._recorded:   # new visit / reset
             self.reset()
 
@@ -206,7 +244,9 @@ def _apply_to_shared_game(consumer, msg):
     # Mirror the board's physical state into STATUS so the AI loop waits for the
     # human's darts to be pulled (Takeout) before it steps up. There are darts in
     # the board once this visit has recorded a throw and no takeout has been seen.
-    detect.STATUS["awaiting_clear"] = (consumer._recorded > 0 and not consumer._closed)
+    awaiting = (consumer._recorded > 0 and not consumer._closed)
+    detect.STATUS["awaiting_clear"] = awaiting
+    _publish(awaiting_takeout=awaiting)
 
 
 async def run(url, on_message=None, retry_secs=3.0):
@@ -226,6 +266,7 @@ async def run(url, on_message=None, retry_secs=3.0):
                 print(f"[autodarts] connected {url}")
                 CONNECTED = True
                 consumer.reset()
+                _publish(awaiting_takeout=False)
                 async for raw in ws:
                     try:
                         data = json.loads(raw)
@@ -234,9 +275,11 @@ async def run(url, on_message=None, retry_secs=3.0):
                     sink(consumer, data)
         except asyncio.CancelledError:
             CONNECTED = False
+            _publish(awaiting_takeout=False)
             raise
         except Exception as e:
             CONNECTED = False
+            _publish(awaiting_takeout=False)
             print(f"[autodarts] not connected ({type(e).__name__}: {e}); "
                   f"retrying in {retry_secs:.0f}s")
             await asyncio.sleep(retry_secs)

@@ -5,6 +5,7 @@
 import { useMemo } from 'react'
 import { Trophy } from 'lucide-react'
 import Caricature, { Accessory } from '../art/Caricature'
+import { THEME_CSS } from './modeThemes'
 
 export const HEART = 'M12,21 C5,16 2,11 2,7.5 C2,4.5 4.5,2.5 7,2.5 C9,2.5 10.8,3.6 12,5.4 ' +
   'C13.2,3.6 15,2.5 17,2.5 C19.5,2.5 22,4.5 22,7.5 C22,11 19,16 12,21 Z'
@@ -65,9 +66,49 @@ export function SideChar({ pl, pose, side, active, defeated }) {
   )
 }
 
+// ── How-to-play card (shown after the walk-ons, before the match) ───────────
+export function RulesCard({ rules, players = [], onStart, theme }) {
+  const accent = theme?.accent || '#fbbf24'
+  return (
+    <div className={`absolute inset-0 z-20 flex items-center justify-center px-6 ${theme?.cls || ''}`}>
+      <div className="cin-rules" style={{ boxShadow: `0 40px 120px rgba(0,0,0,.7), 0 0 90px ${accent}22` }}>
+        {theme?.emblem && <div className="th-emblem">{theme.emblem}</div>}
+        <div className="text-xs font-bold tracking-[0.45em] uppercase mb-2 cin-rise"
+          style={{ color: accent }}>★ How to play</div>
+        <div className="cin-rules-title cin-rise2">{rules.title}</div>
+        <div className="text-lg text-white/55 font-light mb-6 cin-rise3">{rules.tagline}</div>
+        <ul className="space-y-3 text-left max-w-xl mx-auto">
+          {rules.lines.map((l, i) => (
+            <li key={i} className="flex items-start gap-3 cin-rise3"
+              style={{ animationDelay: `${0.4 + i * 0.12}s` }}>
+              <span className="mt-1 w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[11px] font-black"
+                style={{ background: `${accent}22`, color: accent, border: `1px solid ${accent}66` }}>{i + 1}</span>
+              <span className="text-white/85 text-base leading-snug">{l}</span>
+            </li>
+          ))}
+        </ul>
+        {players.length > 0 && (
+          <div className="mt-7 flex items-center justify-center gap-2 flex-wrap">
+            {players.map((p, i) => (
+              <span key={i} className="px-3 py-1 rounded-full text-[11px] font-bold tracking-[0.15em] uppercase"
+                style={{ background: `${p.color}22`, color: p.color, border: `1px solid ${p.color}55` }}>
+                {p.name}
+              </span>
+            ))}
+          </div>
+        )}
+        <button onClick={onStart} className="cin-rules-go cin-rise3"
+          style={{ animationDelay: '0.7s', background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 10px 30px ${accent}66` }}>
+          Let’s play ▶
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Lower-third scoreboard ──────────────────────────────────────────────────
-export function Panel({ pl, idx, score, stat, active, visitDarts, winnerIdx }) {
-  const right = idx === 1
+export function Panel({ pl, idx, score, stat, active, visitDarts, winnerIdx, mirror }) {
+  const right = mirror ?? (idx === 1)
   const avg = stat.darts ? ((3 * stat.pts) / stat.darts).toFixed(1) : '—'
   const won = winnerIdx === idx
   return (
@@ -111,15 +152,132 @@ export function Panel({ pl, idx, score, stat, active, visitDarts, winnerIdx }) {
   )
 }
 
+// ── Cricket marks scoreboard ────────────────────────────────────────────────
+// Shows each target (20-15 + Bull) with per-player closing progress as three
+// pips (filled = a mark, empty = still needed) so a player can see exactly how
+// many more they need to close. A number goes grey/"dead" once every player has
+// closed it — no more points are available on it. Points only ever go up when a
+// closed number is hit while an opponent is still open.
+const CRICKET_TARGETS = [20, 19, 18, 17, 16, 15, 25]
+
+function MarkPips({ marks, color, dead }) {
+  return (
+    <span className="inline-flex gap-[3px] items-center">
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="w-2 h-2 rounded-full"
+          style={{
+            background: i < marks ? (dead ? '#6b7280' : color) : 'transparent',
+            border: `1.5px solid ${i < marks ? (dead ? '#6b7280' : color) : 'rgba(255,255,255,0.25)'}`,
+          }} />
+      ))}
+    </span>
+  )
+}
+
+export function CricketScoreboard({ game, players, activeIdx, winnerIdx }) {
+  const gp = game.players || []
+  const isDead = (t) => gp.every((p) => (p.state?.marks?.[String(t)] ?? 0) >= 3)
+  return (
+    <div className="mx-auto mb-4 w-full max-w-3xl rounded-2xl border border-white/10 bg-black/45 backdrop-blur-md px-4 py-3 z-30">
+      <div className="grid items-center gap-x-3 gap-y-1.5"
+        style={{ gridTemplateColumns: `auto repeat(${players.length}, minmax(0,1fr))` }}>
+        {/* header: player names + points */}
+        <div />
+        {players.map((p, i) => (
+          <div key={i} className="text-center min-w-0">
+            <div className="font-extrabold uppercase tracking-wide text-xs truncate"
+              style={{ color: i === activeIdx || i === winnerIdx ? p.color : 'rgba(255,255,255,0.6)' }}>
+              {p.name} {i === winnerIdx && <Trophy className="inline w-3.5 h-3.5 text-amber-400 -mt-0.5" />}
+            </div>
+            <div className="text-lg font-black tabular-nums"
+              style={{ color: i === activeIdx || i === winnerIdx ? p.color : 'rgba(255,255,255,0.5)' }}>
+              {gp[i]?.score ?? 0}
+            </div>
+          </div>
+        ))}
+        {/* one row per target */}
+        {CRICKET_TARGETS.map((t) => {
+          const dead = isDead(t)
+          return (
+            <div key={t} className="contents">
+              <div className={`text-right font-black tabular-nums text-sm pr-1 ${dead ? 'text-white/25 line-through' : 'text-white/80'}`}>
+                {t === 25 ? 'Bull' : t}
+              </div>
+              {players.map((p, i) => {
+                const m = gp[i]?.state?.marks?.[String(t)] ?? 0
+                return (
+                  <div key={i} className="flex justify-center">
+                    <MarkPips marks={m} color={p.color} dead={dead} />
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Killer scoreboard ───────────────────────────────────────────────────────
+// One card per player: assigned number, lives as heart pips, and an ARMED /
+// OUT status so the elimination race is readable at a glance.
+export function KillerScoreboard({ game, players, activeIdx, winnerIdx }) {
+  const gp = game.players || []
+  const maxLives = game.lives ?? Math.max(1, ...gp.map((p) => p.state?.lives ?? 1))
+  return (
+    <div className="mx-auto mb-4 w-full max-w-4xl flex flex-wrap justify-center gap-3 px-4 z-30">
+      {players.map((pl, i) => {
+        const s = gp[i]?.state || {}
+        const out = s.out
+        const armed = s.killer
+        const live = s.lives ?? 0
+        const hot = i === activeIdx || i === winnerIdx
+        return (
+          <div key={i} className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 border backdrop-blur-md transition-all min-w-[112px] ${out ? 'opacity-40 grayscale' : ''}`}
+            style={hot && !out
+              ? { background: `${pl.color}16`, borderColor: `${pl.color}88`, boxShadow: `0 0 24px ${pl.color}33` }
+              : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.1)' }}>
+            <div className="font-extrabold uppercase tracking-wide text-xs truncate max-w-[100px]"
+              style={{ color: hot && !out ? pl.color : 'rgba(255,255,255,0.7)' }}>
+              {pl.name} {i === winnerIdx && <Trophy className="inline w-3.5 h-3.5 text-amber-400 -mt-0.5" />}
+            </div>
+            <div className="text-3xl font-black tabular-nums leading-none"
+              style={{ color: hot && !out ? pl.color : 'rgba(255,255,255,0.55)' }}>{s.number}</div>
+            <div className="flex gap-1 mt-0.5">
+              {Array.from({ length: maxLives }).map((_, k) => (
+                <span key={k} className="text-sm leading-none" style={{ opacity: k < live ? 1 : 0.2 }}>
+                  {k < live ? '❤️' : '🖤'}
+                </span>
+              ))}
+            </div>
+            <span className="mt-0.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-[0.15em] uppercase"
+              style={out
+                ? { background: 'rgba(239,68,68,0.18)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.4)' }
+                : armed
+                  ? { background: 'rgba(249,115,22,0.18)', color: '#fdba74', border: '1px solid rgba(249,115,22,0.5)' }
+                  : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.12)' }}>
+              {out ? 'Out' : armed ? '☠ Armed'
+                : (game.arm_mode === 'marks' ? `Arm ${s.arm ?? 0}/3` : 'Unarmed')}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Confetti burst ──────────────────────────────────────────────────────────
-export function Confetti() {
+export function Confetti({ colors: palette } = {}) {
   const pieces = useMemo(() => {
     // Pure index-based hash keeps this render-pure (and the burst identical each run).
     const rnd = (i, salt) => {
       const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453
       return x - Math.floor(x)
     }
-    const colors = ['#fbbf24', '#fb7185', '#22d3ee', '#a78bfa', '#34d399', '#f8fafc']
+    const colors = palette && palette.length
+      ? palette
+      : ['#fbbf24', '#fb7185', '#22d3ee', '#a78bfa', '#34d399', '#f8fafc']
     return Array.from({ length: 130 }, (_, i) => ({
       left: rnd(i, 1) * 100,
       delay: rnd(i, 2) * 2.5,
@@ -129,7 +287,7 @@ export function Confetti() {
       sway: `${rnd(i, 6) * 160 - 80}px`,
       color: colors[i % colors.length],
     }))
-  }, [])
+  }, [palette])
   return (
     <div className="cin-confetti">
       {pieces.map((p, i) => (
@@ -247,8 +405,24 @@ export const CSS = `
 @keyframes cin-fall { 0% { transform:translateY(-6vh) rotate(0) translateX(0); }
   100% { transform:translateY(115vh) rotate(680deg) translateX(var(--sway, 0px)); } }
 
+.cin-rules { width:min(680px, 92vw); border-radius:26px; padding:34px 36px 30px; text-align:center;
+  background:linear-gradient(180deg, rgba(18,21,31,.96), rgba(10,12,18,.96));
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow: 0 40px 120px rgba(0,0,0,.7), 0 0 90px rgba(125,170,255,.12);
+  animation: cin-pop-in .6s cubic-bezier(.2,1.4,.3,1) both; }
+.cin-rules-title { font-size:clamp(40px, 7vw, 76px); line-height:.95; font-weight:900;
+  background:linear-gradient(100deg, #fff 20%, #8be3ff 45%, #fff 60%, #ff9ad5 82%);
+  background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation: cin-shine 3.5s linear infinite; }
+.cin-rules-go { margin-top:26px; padding:13px 40px; border-radius:14px; cursor:pointer;
+  font-weight:800; letter-spacing:.18em; text-transform:uppercase; font-size:15px; color:#06121a;
+  background:linear-gradient(180deg, #7ff0ff, #22d3ee); border:none;
+  box-shadow: 0 10px 30px rgba(34,211,238,.4); transition: transform .15s, box-shadow .15s; }
+.cin-rules-go:hover { transform:translateY(-2px); box-shadow: 0 16px 40px rgba(34,211,238,.55); }
+.cin-rules-go:active { transform:translateY(0); }
+
 .cin-winner { width:min(460px, 94vw); border-radius:28px; padding:30px 28px 26px; text-align:center;
   background:linear-gradient(180deg, #12151f, #0a0c12); border:1px solid rgba(255,255,255,.12);
   box-shadow: 0 40px 120px rgba(0,0,0,.7), 0 0 90px rgba(245,158,11,.12);
   animation: cin-pop-in .6s cubic-bezier(.2,1.4,.3,1) both; }
-`
+` + THEME_CSS

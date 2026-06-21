@@ -6,15 +6,108 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Volume2, VolumeX, Star, Move } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
-import { CSS, WalkOnCard, SideChar, Panel } from './broadcastParts'
+import { CSS, WalkOnCard, RulesCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti } from './broadcastParts'
+import { themeFor } from './modeThemes'
+import KillerSpin from './KillerSpin'
 import { sound } from './audio'
 import { getAvatar } from '../config/avatars'
 import { ThrowState } from '../config/timing'
 
-// Player accent colours — left = cyan, right = rose, matching the demo.
-const COLORS = ['#22d3ee', '#fb7185']
+// Player accent colours — cyan / rose first (matching the demo), then a spread
+// for 3-6 player games.
+const COLORS = ['#22d3ee', '#fb7185', '#a78bfa', '#34d399', '#fbbf24', '#f97316']
 const DEFAULT_ACCESSORIES = ['darts', 'trophy', 'pint']
 const ROTS = [-7, 6, 13] // slight per-dart tilt so the three darts don't overlap perfectly
+
+// Per-mode rules shown on the intro card (and announced by the caller). `text`
+// uses the live game dict so round counts / start scores are accurate.
+function rulesFor(game) {
+  const mode = game?.mode ?? 'X01'
+  const rounds = game?.rounds
+  switch (mode) {
+    case 'Cricket':
+      return {
+        title: 'Cricket',
+        tagline: 'Close it out',
+        lines: [
+          'Targets are 20, 19, 18, 17, 16, 15 and the bull.',
+          'Three marks closes a number for YOU (single = 1, double = 2, treble = 3) — it stays open for everyone else.',
+          'Once you have closed a number, more hits score its value as points — but only while an opponent still has it open.',
+          'A number is dead (no points) once everyone has closed it.',
+          'Win by closing all your numbers with the points lead (or level).',
+        ],
+        say: 'Cricket. Close twenty down to fifteen and the bull. Closing is per player. Score points on your closed numbers while an opponent is still open, then finish with the lead to win.',
+      }
+    case 'Around the Clock':
+      return {
+        title: 'Around the Clock',
+        tagline: '1 → 20 → Bull',
+        lines: [
+          'Hit every number in order: 1 through 20, then the bull.',
+          'Any single, double or treble of your target counts.',
+          'First player to clear the bull wins.',
+        ],
+        say: 'Around the Clock. Hit one through twenty in order, then the bull. First to finish wins.',
+      }
+    case 'Shanghai':
+      return {
+        title: 'Shanghai',
+        tagline: `Target 1 → ${rounds ?? 7}`,
+        lines: [
+          'Each round targets one number, climbing from 1.',
+          'Single, double and treble of that number score.',
+          `Highest total after ${rounds ?? 7} rounds wins…`,
+          'Hit the single, double AND treble in one visit for an instant Shanghai!',
+        ],
+        say: 'Shanghai. Hit the round number for points. Land a single, double and treble in one visit to win outright.',
+      }
+    case 'Killer': {
+      const hard = game?.arm_mode === 'double'
+      const armLine = hard
+        ? 'Arm yourself: hit the DOUBLE of YOUR own number to become a killer.'
+        : 'Arm yourself: land 3 hits on YOUR own number to become a killer (a treble arms you at once).'
+      return {
+        title: 'Killer',
+        tagline: hard ? 'Last one standing · Hard' : 'Last one standing',
+        lines: [
+          'Everyone is given a number and a set of lives.',
+          armLine,
+          'Then hit an opponent\'s number to take lives — single 1, double 2, treble 3.',
+          'Careful: once armed, hitting your OWN number costs YOU lives.',
+          'Lose all your lives and you\'re out. Last player alive wins.',
+        ],
+        say: hard
+          ? 'Killer. Arm on your own double, then knock the lives off everyone else. Last one standing wins. Watch your own number!'
+          : 'Killer. Hit your own number three times to arm, then knock the lives off everyone else. Last one standing wins. Watch your own number!',
+      }
+    }
+    case 'Count Up':
+      return {
+        title: 'Count Up',
+        tagline: `${rounds ?? 8} rounds`,
+        lines: [
+          'Every dart scores its face value.',
+          'Pile on as many points as you can.',
+          `Highest total after ${rounds ?? 8} rounds takes it.`,
+        ],
+        say: `Count Up. Score as many points as you can over ${rounds ?? 8} rounds. Highest total wins.`,
+      }
+    default: {
+      const ci = game?.check_in === 'master' ? 'Master in'
+        : game?.check_in === 'double' ? 'Double in' : 'Straight in'
+      return {
+        title: `${game?.start_score ?? 501}`,
+        tagline: `${ci} · ${game?.double_out ? 'Double out' : 'Straight out'}`,
+        lines: [
+          `First player to reach exactly zero from ${game?.start_score ?? 501}.`,
+          `${ci}${game?.double_out ? ', and you must finish on a double.' : '.'}`,
+          'Three darts a visit — go bust and the visit is wiped.',
+        ],
+        say: `${game?.start_score ?? 501}, ${ci.toLowerCase()}${game?.double_out ? ', double out' : ''}. First to zero wins.`,
+      }
+    }
+  }
+}
 
 // Map a live game player + chosen avatar into the broadcast `pl` shape.
 function toCinPlayer(p, idx, avatarMap) {
@@ -30,6 +123,49 @@ function toCinPlayer(p, idx, avatarMap) {
   }
 }
 
+// Live Autodarts board-manager status chip. Reads the status pushed on the
+// game-state WS (game.autodarts) and ticks once a second so a STUCK board (e.g.
+// stuck mid-takeout, or no activity) becomes obvious instead of a silent hang.
+function AutodartsStatus({ status }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  if (!status) return null
+
+  const age = status.ts ? Math.max(0, Math.floor(now / 1000 - status.ts)) : null
+  const ev = (status.event || '').toLowerCase()
+  let dot = 'bg-emerald-400', label = 'Board ready', pulse = false
+  if (!status.connected) {
+    dot = 'bg-red-500'; label = 'Board offline'; pulse = true
+  } else if (status.awaiting_takeout) {
+    dot = 'bg-amber-400'; label = 'Take out darts'; pulse = true
+  } else if (ev.includes('takeout') || ev.includes('take out')) {
+    dot = 'bg-amber-400'; label = 'Takeout'; pulse = true
+  } else if (ev.includes('throw')) {
+    dot = 'bg-cyan-400'; label = 'Throw detected'; pulse = true
+  } else if (ev.includes('reset')) {
+    dot = 'bg-white/50'; label = 'Board reset'
+  }
+  // Connected but no board activity for a while during a takeout/awaiting state
+  // → likely stuck. Surface it loudly.
+  const watching = !status.connected || status.awaiting_takeout || ev.includes('takeout')
+  const stuck = status.connected && watching && age != null && age >= 12
+
+  return (
+    <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-[0.15em] uppercase border"
+      style={stuck
+        ? { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)', color: '#fca5a5' }
+        : { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.75)' }}
+      title="Autodarts board-manager status">
+      <span className={`w-2 h-2 rounded-full ${stuck ? 'bg-red-500' : dot} ${pulse ? 'animate-pulse' : ''}`} />
+      {stuck ? `Stuck? ${label} · ${age}s` : label}
+      {!stuck && age != null && age >= 4 && watching && <span className="opacity-50">· {age}s</span>}
+    </span>
+  )
+}
+
 // Throw-animation phase → caricature pose for the player currently throwing.
 function poseForState(animState) {
   switch (animState) {
@@ -42,7 +178,7 @@ function poseForState(animState) {
   }
 }
 
-export default function CinematicGame({ game, avatarMap = {}, animState, boardDarts, cameraSrc, onExit }) {
+export default function CinematicGame({ game, avatarMap = {}, animState, boardDarts, cameraSrc, onExit, onAssignNumbers }) {
   const [muted, setMuted] = useState(!sound.enabled)
   const [phase, setPhase] = useState('match') // 'walkon' | 'match'
   const [walkonIdx, setWalkonIdx] = useState(0)
@@ -52,6 +188,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const walkTimers = useRef([])
   const prevSeqRef = useRef(game?.dart_seq ?? 0)
   const bigCallTimer = useRef(null)
+  const prevKillerRef = useRef(null)
 
   // ── Draggable camera inset ────────────────────────────────────────────────
   // Position is the inset's top-left within the board stage, in px. null = the
@@ -111,9 +248,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     : null
 
   // ── Walk-on intro: only for a freshly-started game ────────────────────────
-  const sig = players.map((p) => p.name).join('|') + '@' + (game?.start_score ?? '')
-  const isFresh = !!game && !game.over && (game.dart_seq ?? 0) === 0 &&
-    players.every((p) => p.score === game.start_score)
+  // Freshness = a new game with no darts thrown yet. (Don't tie this to score
+  // matching start_score — modes like Killer start each player above 0, so that
+  // check wrongly suppressed the intro.)
+  const sig = players.map((p) => p.name).join('|') + '@' +
+    (game?.mode ?? '') + ':' + (game?.start_score ?? '') + ':' + (game?.lives ?? game?.rounds ?? '')
+  const isFresh = !!game && !game.over && (game.dart_seq ?? 0) === 0
 
   useEffect(() => {
     if (!game) return
@@ -123,19 +263,31 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
 
-    // Each walk-on card holds for 3s (total ~6s). The camera feed is mounted
-    // throughout (see render) so it warms up during the intro and is ready by
-    // the time play starts. Deferred (setTimeout 0) to avoid synchronous setState.
-    if (isFresh && players.length === 2) {
+    // Walk-on: every player gets a 3s blister-pack card, then a rules card
+    // explaining the mode, then play. The camera feed is mounted throughout
+    // (see render) so it warms up during the intro. Deferred (setTimeout 0) to
+    // avoid synchronous setState.
+    if (isFresh && players.length >= 1) {
       const intro = cinPlayers
+      const rules = rulesFor(game)
       const announce = (pl) => {
         sound.cheer(false)
         sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04 })
       }
       sound.stop()
-      walkTimers.current.push(setTimeout(() => { setPhase('walkon'); setWalkonIdx(0); announce(intro[0]) }, 0))
-      walkTimers.current.push(setTimeout(() => { setWalkonIdx(1); announce(intro[1]) }, 3000))
-      walkTimers.current.push(setTimeout(() => { setPhase('match'); sound.cheer(false); sound.say('Game on!', { rate: 0.9 }) }, 6000))
+      const STEP = 3000
+      intro.forEach((pl, i) => {
+        walkTimers.current.push(setTimeout(() => {
+          setPhase('walkon'); setWalkonIdx(i); announce(pl)
+        }, i === 0 ? 0 : i * STEP))
+      })
+      const afterWalkons = intro.length * STEP
+      // Rules card stays up until the user clicks "Let's play" — no auto-close.
+      walkTimers.current.push(setTimeout(() => {
+        setPhase('rules')
+        sound.cheer(false)
+        sound.say(rules.say, { rate: 0.96 })
+      }, afterWalkons))
     } else {
       walkTimers.current.push(setTimeout(() => setPhase('match'), 0))
     }
@@ -146,6 +298,31 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const skipIntro = () => {
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
+    sound.stop()
+    sound.say(rulesFor(game).say, { rate: 0.96 })
+    setPhase('rules')
+  }
+
+  // User confirms the rules card → Killer goes to the spin-the-wheel number
+  // pick first; every other mode starts play immediately.
+  const startMatch = () => {
+    walkTimers.current.forEach(clearTimeout)
+    walkTimers.current = []
+    if ((game?.mode) === 'Killer') {
+      sound.say('Spin for your numbers!', { rate: 0.98 })
+      setPhase('spin')
+      return
+    }
+    sound.cheer(false)
+    sound.say('Game on!', { rate: 0.9 })
+    setPhase('match')
+  }
+
+  // Spin-the-wheel finished → push the chosen numbers to the backend, then play.
+  const confirmNumbers = async (numbers) => {
+    try { await onAssignNumbers?.(numbers) } catch { /* non-fatal */ }
+    sound.cheer(false)
+    sound.say('Game on!', { rate: 0.9 })
     setPhase('match')
   }
 
@@ -163,12 +340,24 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
 
     const total = disp.reduce((s, d) => s + (d.points || 0), 0)
     const msg = game.message || ''
+    const mode = game.mode ?? 'X01'
+    const x01 = mode === 'X01'
+    const th = themeFor(mode)
     let call = null
-    if (game.over) call = { text: 'GAME SHOT', sub: 'AND THE MATCH' }
+    if (game.over) call = { ...th.win }
     else if (/wins the set/i.test(msg)) call = { text: 'GAME SHOT', sub: 'AND THE SET' }
     else if (/wins the leg/i.test(msg)) call = { text: 'GAME SHOT', sub: 'THE LEG' }
-    else if (total === 180) call = { text: '180', sub: 'MAXIMUM' }
-    else if (total >= 100) call = { text: String(total), sub: 'BIG SCORE' }
+    else if (/SHANGHAI/i.test(msg)) call = { text: 'SHANGHAI', sub: 'INSTANT WIN' }
+    // Killer: announce an elimination (not a win) with the knocked-out player.
+    else if (mode === 'Killer' && /KNOCKS OUT|is OUT/i.test(msg)) {
+      const victim = (msg.match(/KNOCKS OUT (.+?) \(/) || msg.match(/(\w[\w ]*) hit their OWN/) || [])[1]
+      call = { text: 'ELIMINATED', sub: victim ? victim.trim() : 'ONE DOWN', elim: true }
+    }
+    // The 180 / big-score calls only make sense in X01, where the visit total
+    // is the score. In Cricket/ATC the dart face value isn't the score, so a
+    // "60 BIG SCORE" on three closing trebles would be nonsense.
+    else if (x01 && total === 180) call = { text: '180', sub: 'MAXIMUM' }
+    else if (x01 && total >= 100) call = { text: String(total), sub: 'BIG SCORE' }
 
     if (call) {
       clearTimeout(bigCallTimer.current)
@@ -180,13 +369,36 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
 
   useEffect(() => () => clearTimeout(bigCallTimer.current), [])
 
+  // ── Killer sound design: kerching (arming hit), lock-and-load (armed), and
+  // ouch (a life knocked off). Diff the per-player Killer state each update. ──
+  useEffect(() => {
+    if (!game || game.mode !== 'Killer') { prevKillerRef.current = null; return }
+    const cur = (game.players || []).map((p) => ({
+      arm: p.state?.arm ?? 0,
+      killer: !!p.state?.killer,
+      lives: p.state?.lives ?? 0,
+    }))
+    const prev = prevKillerRef.current
+    if (prev && prev.length === cur.length) {
+      cur.forEach((c, i) => {
+        const pr = prev[i]
+        if (!pr.killer && c.killer) sound.lockLoad()        // just armed
+        else if (!c.killer && c.arm > pr.arm) sound.kerching() // arming hit
+        if (c.lives < pr.lives) sound.ouch()                // life taken
+      })
+    }
+    prevKillerRef.current = cur
+  }, [game])
+
   const toggleMute = () => {
     const next = !muted
     setMuted(next)
     sound.setEnabled(!next)
   }
 
-  if (!game || players.length < 2) return null
+  if (!game || players.length < 1) return null
+  const isX01 = (game.mode ?? 'X01') === 'X01'
+  const theme = themeFor(game.mode ?? 'X01')
 
   const activeColor = COLORS[Math.max(0, activeIdx)] || COLORS[0]
   const darts = (boardDarts || [])
@@ -207,6 +419,39 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
 
   const stat = (p) => ({ darts: p.darts, pts: (p.avg * p.darts) / 3 })
 
+  // Board segments the active player should aim for (Cricket / ATC / Shanghai).
+  const boardTargets = (() => {
+    if (game.over || activeIdx < 0) return []
+    const ap = players[activeIdx]
+    if (game.mode === 'Cricket' && ap?.state?.marks) {
+      return Object.entries(ap.state.marks)
+        .filter(([, m]) => m < 3)
+        .map(([k]) => Number(k))
+    }
+    if (game.mode === 'Around the Clock' && ap?.state?.target) {
+      const t = ap.state.target
+      return [t === 'Bull' ? 25 : Number(t)].filter((n) => !Number.isNaN(n))
+    }
+    if (game.mode === 'Shanghai' && game.target) {
+      return [game.target]
+    }
+    if (game.mode === 'Killer' && ap?.state) {
+      if (!ap.state.killer) return [ap.state.number]   // arm on your own number
+      // Armed: aim at every alive opponent's number.
+      return players
+        .filter((p, i) => i !== activeIdx && !p.state?.out)
+        .map((p) => p.state?.number)
+        .filter(Boolean)
+    }
+    return []
+  })()
+
+  // Which players get a flanking caricature. 1-2 players → fixed P1/P2; 3+ →
+  // the active thrower on the left (everyone is listed in the panels below).
+  const sideChars = players.length <= 2
+    ? { left: 0, right: players.length > 1 ? 1 : null }
+    : { left: Math.max(0, activeIdx), right: null }
+
   return (
     <div ref={stageRef} className="relative w-full h-full overflow-hidden rounded-2xl text-white">
       <style>{CSS}</style>
@@ -221,10 +466,11 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           <span className="text-white/60 text-[11px] font-bold tracking-[0.3em] uppercase hidden sm:flex items-center gap-1.5">
             <Star className="w-3.5 h-3.5 text-amber-400" /> Cinematic mode
           </span>
+          <AutodartsStatus status={game.autodarts} />
         </div>
         <div className="flex items-center gap-2">
           {phase === 'walkon' && (
-            <button onClick={skipIntro} className="cin-chipbtn">Skip intro</button>
+            <button onClick={skipIntro} className="cin-chipbtn">Skip to rules</button>
           )}
           <button onClick={toggleMute} className="cin-chipbtn" title="Toggle sound">
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -238,18 +484,39 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       {/* Walk-on intro */}
       {phase === 'walkon' && <WalkOnCard key={walkonIdx} pl={cinPlayers[walkonIdx]} />}
 
+      {/* Rules / how-to-play card */}
+      {phase === 'rules' && <RulesCard rules={rulesFor(game)} players={cinPlayers} onStart={startMatch} theme={theme} />}
+
+      {/* Killer spin-the-wheel number pick */}
+      {phase === 'spin' && (
+        <KillerSpin
+          players={cinPlayers.map((cp, i) => ({ ...cp, is_ai: players[i]?.is_ai }))}
+          accent={theme.accent}
+          onConfirm={confirmNumbers}
+        />
+      )}
+
       {/* Match stage */}
       {phase === 'match' && (
         <div className="absolute inset-0 z-10 flex flex-col pt-14">
           <div className="flex-1 relative flex items-center justify-center min-h-0 py-2">
             <div className="cin-board-glow" />
             <div className="cin-zoom h-full max-h-[58vh] aspect-square">
-              <BroadcastBoard darts={darts} />
+              <BroadcastBoard darts={darts} targets={boardTargets} targetColor={activeColor} />
             </div>
-            <SideChar pl={cinPlayers[0]} pose={poses[0]} side="left" active={activeIdx === 0}
-              defeated={winnerIdx != null && winnerIdx !== 0} />
-            <SideChar pl={cinPlayers[1]} pose={poses[1]} side="right" active={activeIdx === 1}
-              defeated={winnerIdx != null && winnerIdx !== 1} />
+            {/* Flanking caricatures. For 1-2 players, left=P1 / right=P2. For 3+
+                players the side art follows the active thrower (left) so the
+                person at the oche is always on screen; everyone shows below. */}
+            {sideChars.left != null && cinPlayers[sideChars.left] && (
+              <SideChar pl={cinPlayers[sideChars.left]} pose={poses[sideChars.left]} side="left"
+                active={activeIdx === sideChars.left}
+                defeated={winnerIdx != null && winnerIdx !== sideChars.left} />
+            )}
+            {sideChars.right != null && cinPlayers[sideChars.right] && (
+              <SideChar pl={cinPlayers[sideChars.right]} pose={poses[sideChars.right]} side="right"
+                active={activeIdx === sideChars.right}
+                defeated={winnerIdx != null && winnerIdx !== sideChars.right} />
+            )}
           </div>
 
           {game.checkout && activeIdx >= 0 && (
@@ -257,28 +524,69 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
               CHECKOUT · {game.checkout}
             </div>
           )}
-
-          <div className="flex gap-3 items-stretch px-5 pb-5 pt-3 z-30">
-            <Panel pl={cinPlayers[0]} idx={0} score={players[0].score} stat={stat(players[0])}
-              active={activeIdx === 0} visitDarts={activeIdx === 0 ? visitDarts : []} winnerIdx={winnerIdx} />
-            <div className="hidden lg:flex flex-col items-center justify-center px-4 text-center shrink-0">
-              <div className="text-2xl font-black text-white/85 tabular-nums">{game.start_score}</div>
-              <div className="text-[9px] tracking-[0.3em] text-white/40 font-bold uppercase">
-                {game.double_out ? 'Double out' : 'Straight out'}
-              </div>
+          {!isX01 && (
+            <div className="cin-hint self-center" style={{ borderColor: `${activeColor}99`, color: activeColor }}>
+              {game.mode_label || game.mode}
             </div>
-            <Panel pl={cinPlayers[1]} idx={1} score={players[1].score} stat={stat(players[1])}
-              active={activeIdx === 1} visitDarts={activeIdx === 1 ? visitDarts : []} winnerIdx={winnerIdx} />
+          )}
+
+          {game.mode === 'Cricket' ? (
+            <div className="px-5 pb-2 pt-1">
+              <CricketScoreboard game={game} players={cinPlayers}
+                activeIdx={activeIdx} winnerIdx={winnerIdx} />
+            </div>
+          ) : game.mode === 'Killer' ? (
+            <div className="px-5 pb-2 pt-1">
+              <KillerScoreboard game={game} players={cinPlayers}
+                activeIdx={activeIdx} winnerIdx={winnerIdx} />
+            </div>
+          ) : (
+          <div className="flex gap-3 items-stretch px-5 pb-5 pt-3 z-30">
+            {players.length === 2 ? (
+              <>
+                <Panel pl={cinPlayers[0]} idx={0} score={players[0].score} stat={stat(players[0])}
+                  active={activeIdx === 0} visitDarts={activeIdx === 0 ? visitDarts : []} winnerIdx={winnerIdx} />
+                <div className="hidden lg:flex flex-col items-center justify-center px-4 text-center shrink-0">
+                  <div className="text-2xl font-black text-white/85 tabular-nums">
+                    {isX01 ? game.start_score : (game.target ?? game.round ?? '·')}
+                  </div>
+                  <div className="text-[9px] tracking-[0.3em] text-white/40 font-bold uppercase max-w-[7rem]">
+                    {isX01 ? (game.double_out ? 'Double out' : 'Straight out')
+                           : (game.mode ?? '')}
+                  </div>
+                </div>
+                <Panel pl={cinPlayers[1]} idx={1} score={players[1].score} stat={stat(players[1])}
+                  active={activeIdx === 1} visitDarts={activeIdx === 1 ? visitDarts : []} winnerIdx={winnerIdx} />
+              </>
+            ) : (
+              cinPlayers.map((cp, i) => (
+                <Panel key={i} pl={cp} idx={i} mirror={false} score={players[i].score} stat={stat(players[i])}
+                  active={activeIdx === i} visitDarts={activeIdx === i ? visitDarts : []} winnerIdx={winnerIdx} />
+              ))
+            )}
           </div>
+          )}
         </div>
       )}
 
-      {/* Big calls */}
+      {/* Win confetti — themed to the mode's palette */}
+      {phase === 'match' && game.over && <Confetti colors={theme.confetti} />}
+
+      {/* Big calls (themed win / elimination / big score) */}
       {bigCall && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none px-4">
           <div className="cin-flash" />
-          <div className="cin-bigcall">{bigCall.text}</div>
-          <div className="cin-bigcall-sub">{bigCall.sub}</div>
+          {bigCall.elim ? (
+            <>
+              <div className="cin-elim">{bigCall.text}</div>
+              <div className="cin-elim-sub">{bigCall.sub}</div>
+            </>
+          ) : (
+            <>
+              <div className="cin-bigcall">{bigCall.text}</div>
+              <div className="cin-bigcall-sub">{bigCall.sub}</div>
+            </>
+          )}
         </div>
       )}
 

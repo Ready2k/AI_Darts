@@ -180,10 +180,15 @@ async def _guarded_stream(gen, request: Request):
 @app.get("/api/config")
 def get_config_endpoint():
     """Current detection source config + board-manager connection status."""
+    ad = detect.STATUS.get("autodarts") or {}
     return {
         "source": DETECTION_SOURCE,
         "autodarts_url": AUTODARTS_URL,
         "autodarts_connected": autodarts_adapter.CONNECTED,
+        "board_event": autodarts_adapter.LAST_EVENT,
+        "board_awaiting_takeout": bool(ad.get("awaiting_takeout")),
+        "board_ts": ad.get("ts", 0),
+        "awaiting_clear": detect.STATUS.get("awaiting_clear", False),
     }
 
 
@@ -262,14 +267,32 @@ async def new_game(request: Request):
         players = None
     detect.new_game(
         players=players,
+        mode=cfg.get("mode"),
         start_score=cfg.get("start_score"),
         double_in=cfg.get("double_in"),
+        check_in=cfg.get("check_in"),
+        rounds=cfg.get("rounds"),
+        lives=cfg.get("lives"),
+        killer_in=cfg.get("killer_in"),
         double_out=cfg.get("double_out"),
         legs_to_win=cfg.get("legs_to_win"),
         sets_to_win=cfg.get("sets_to_win"),
         debug=bool(cfg.get("debug", False)),
     )
     return detect.game_state()
+
+
+@app.post("/api/game/killer/numbers")
+async def killer_numbers(request: Request):
+    """Assign Killer players' numbers (from the spin-the-wheel pre-game).
+    Body: {"numbers": [n0, n1, ...]} aligned to players, or {name: n}."""
+    data = await request.json()
+    nums = data.get("numbers")
+    with detect.GAME_LOCK:
+        g = detect.GAME
+        ok = bool(g and getattr(g, "mode", "") == "Killer"
+                  and hasattr(g, "assign_numbers") and g.assign_numbers(nums))
+    return {"ok": ok, "game": detect.game_state()}
 
 
 @app.post("/api/game/undo")

@@ -22,6 +22,7 @@ def save_match(game):
     """Append a finished match record. Returns the record."""
     record = {
         "ts": time.strftime("%Y-%m-%d %H:%M"),
+        "mode": getattr(game, "mode", "X01"),
         "start_score": game.start_score,
         "double_in": game.double_in,
         "double_out": game.double_out,

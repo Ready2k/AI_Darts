@@ -34,6 +34,8 @@ check("S5", lab(ad.notation_to_hit("S5")), ("5", 5, "SINGLE", 1))
 check("BULL", lab(ad.notation_to_hit("BULL")), ("Bullseye", 50, "INNER_BULL", 1))
 check("OUTER", lab(ad.notation_to_hit("OUTER")), ("Bull", 25, "OUTER_BULL", 1))
 check("MISS", lab(ad.notation_to_hit("MISS")), ("Miss", 0, "MISS", 1))
+check("M5 (board miss)", lab(ad.notation_to_hit("M5")), ("Miss", 0, "MISS", 1))
+check("M20 (board miss)", lab(ad.notation_to_hit("m20")), ("Miss", 0, "MISS", 1))
 check("garbage -> None", ad.notation_to_hit("ZZ"), None)
 
 # confidence float → level (used when an engine like OpenDartboard supplies it)

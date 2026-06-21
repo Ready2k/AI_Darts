@@ -20,6 +20,7 @@ import numpy as np
 
 import dartboard
 import game
+import games
 import history
 import line_tips
 from debug_recorder import recorder as dbg
@@ -34,9 +35,14 @@ GAME      = None
 GAME_LOCK = threading.Lock()
 GAME_CONFIG = {
     "players":     ["Player 1"],
+    "mode":        "X01",    # X01 | Cricket | Around the Clock | Shanghai | Count Up
     "start_score": 501,
     "double_in":   False,
+    "check_in":    "straight",  # straight | double | master (X01 only)
     "double_out":  True,
+    "rounds":      None,     # Count Up / Shanghai round count
+    "lives":       None,     # Killer lives per player
+    "killer_in":   "marks",  # Killer arming: "double" (Hard) | "marks" (Standard)
     "legs_to_win": 3,
     "sets_to_win": 1,
     "debug":       False,    # record this match for debugging (video + telemetry)
@@ -50,14 +56,26 @@ def new_game(**overrides):
         if v is not None and k in GAME_CONFIG:
             GAME_CONFIG[k] = v
     with GAME_LOCK:
-        GAME = game.X01Game(
-            GAME_CONFIG["players"],
-            start_score=GAME_CONFIG["start_score"],
-            double_in=GAME_CONFIG["double_in"],
-            double_out=GAME_CONFIG["double_out"],
+        alt = games.create_game(
+            GAME_CONFIG["mode"], GAME_CONFIG["players"],
+            rounds=GAME_CONFIG.get("rounds"),
+            lives=GAME_CONFIG.get("lives"),
+            killer_in=GAME_CONFIG.get("killer_in"),
             legs_to_win=GAME_CONFIG["legs_to_win"],
             sets_to_win=GAME_CONFIG["sets_to_win"],
         )
+        if alt is not None:
+            GAME = alt
+        else:
+            GAME = game.X01Game(
+                GAME_CONFIG["players"],
+                start_score=GAME_CONFIG["start_score"],
+                double_in=GAME_CONFIG["double_in"],
+                check_in=GAME_CONFIG.get("check_in"),
+                double_out=GAME_CONFIG["double_out"],
+                legs_to_win=GAME_CONFIG["legs_to_win"],
+                sets_to_win=GAME_CONFIG["sets_to_win"],
+            )
     STATUS["game_gen"] += 1
     # Start a fresh debug recording for the new match (or stop any running one).
     if GAME_CONFIG.get("debug"):
@@ -104,6 +122,8 @@ def game_state():
     if d is not None:
         d["detect_phase"] = STATUS["phase"]
         d["awaiting_clear"] = STATUS["awaiting_clear"]
+        if STATUS.get("autodarts") is not None:
+            d["autodarts"] = STATUS["autodarts"]
     return d
 
 # Canonical merged board view (must match align.py)

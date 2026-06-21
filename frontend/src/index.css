@@ -36,6 +36,17 @@ body {
   transform-origin: center;
 }
 
+/* Autodarts-style hit-segment flash */
+@keyframes segment-flash {
+  0%, 100% { opacity: 0; }
+  15%      { opacity: 0.85; }
+  50%      { opacity: 0.25; }
+}
+
+.animate-segment-flash {
+  animation: segment-flash 1.1s ease-in-out 3;
+}
+
 /* Dialog styling */
 dialog {
   background: transparent;

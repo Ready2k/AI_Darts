@@ -67,6 +67,33 @@ export default function DartBoard({ darts = [], armed = false, onPick, className
     )
   }
 
+  // Autodarts-style flash of the bed the last dart landed in, derived from its
+  // impact point (mm). Re-keyed on each new dart so the CSS animation restarts.
+  let flash = null
+  const lastDart = darts.length ? darts[darts.length - 1] : null
+  if (lastDart && lastDart.pos) {
+    const [mx, my] = lastDart.pos
+    const dist = Math.hypot(mx, my)             // mm from bull
+    if (dist <= 170) {                          // on the board (not a miss)
+      const idx = ((Math.round(Math.atan2(mx, my) / deg(18)) % 20) + 20) % 20
+      const t0 = deg(idx * 18 - 9)
+      const t1 = deg(idx * 18 + 9)
+      let d
+      if (dist < 15.9) {
+        d = null                                // bull/25 — flash the centre rings instead
+      } else if (dist >= 99 && dist < 107) {
+        d = sector(TRB_IN, TRB_OUT, t0, t1)     // triple
+      } else if (dist >= 162) {
+        d = sector(DBL_IN, R_OUT, t0, t1)       // double
+      } else if (dist < 99) {
+        d = sector(BULLS, TRB_IN, t0, t1)       // inner single
+      } else {
+        d = sector(TRB_OUT, DBL_IN, t0, t1)     // outer single
+      }
+      flash = { d, bull: dist < 15.9, key: darts.length }
+    }
+  }
+
   const numbers = SEGMENTS.map((seg, i) => {
     const [x, y] = pt(R_OUT + 9, deg(i * 18))
     return (
@@ -91,6 +118,16 @@ export default function DartBoard({ darts = [], armed = false, onPick, className
       <circle cx={C} cy={C} r={BULLS} fill="#1c7a3e" />
       <circle cx={C} cy={C} r={BULL} fill="#b4202a" />
       {numbers}
+
+      {flash && (
+        flash.bull ? (
+          <circle key={flash.key} className="animate-segment-flash"
+            cx={C} cy={C} r={BULLS} fill="#fde047" pointerEvents="none" />
+        ) : (
+          <path key={flash.key} className="animate-segment-flash"
+            d={flash.d} fill="#fde047" pointerEvents="none" />
+        )
+      )}
 
       {darts.filter((d) => d.pos).map((d, i, arr) => {
         const last = i === arr.length - 1

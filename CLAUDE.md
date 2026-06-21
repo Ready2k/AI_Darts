@@ -25,7 +25,8 @@ cd frontend && npm run build
 cd frontend && npm run lint
 
 # Tests
-python3 test_game.py                     # game engine + checkout + hit detail
+python3 test_game.py                     # X01 engine + checkout + hit detail + check-in
+python3 test_games.py                    # Cricket / ATC / Shanghai / Count Up / Killer + AI + master-in
 python3 test_autocal.py                  # ellipse auto-calibration
 python3 test_consensus.py                # multi-dart cross-camera tip clustering
 python3 test_line_tips.py                # shaft-line intersection tip localisation
@@ -67,7 +68,9 @@ Detection works in a **canonical board space**: a 500×500px image where the cen
 ### Scoring & game engine (`dartboard.py`, `game.py`, `checkout.py`)
 
 - `dartboard.score_detail(x_mm, y_mm)` → a `Hit(points, label, ring, segment, multiplier)`; `ring` ∈ {INNER_BULL, OUTER_BULL, DOUBLE, TRIPLE, SINGLE, MISS}. `score_at()` still returns the `(points, label)` tuple for back-compat. `is_double(hit)` (DOUBLE or INNER_BULL) drives double-in/out.
-- `game.X01Game` is the X01 engine: 301/501/701, double-in/out, 3-dart visits, bust (revert visit), multiple players, legs/sets, 3-dart averages, `undo()` (snapshot stack), and `to_dict()` for the web UI. Driven by `record_hit(hit, position)` where `position` is the optional board-mm coord. `correct_last(hit, position)` (undo + re-apply) powers **click-to-correct** misreads. Finished matches are appended to `match_history.json` via `history.save_match()` (detect loop saves on the over-edge).
+- `game.X01Game` is the X01 engine: 301/501/701, 3-dart visits, bust (revert visit), multiple players, legs/sets, 3-dart averages, `undo()` (snapshot stack), and `to_dict()` for the web UI. Check-in is set via `check_in` ∈ {`straight`, `double`, `master`} (`master` opens on a double **or** treble; `is_master()`/`is_triple()` live in `dartboard.py`); the legacy `double_in=True` flag still maps to `check_in="double"`. `double_out` controls the finish. Driven by `record_hit(hit, position)` where `position` is the optional board-mm coord. `correct_last(hit, position)` (undo + re-apply) powers **click-to-correct** misreads. Finished matches are appended to `match_history.json` via `history.save_match()` (detect loop saves on the over-edge).
+- **Alternative game modes** (`games.py`): `CricketGame`, `AroundTheClockGame`, `ShanghaiGame`, `CountUpGame`, `KillerGame` all subclass `BaseGame`, which shares the X01-compatible interface (`record_hit`, `to_dict`, `undo`, `enter_review`/`confirm_review`, `.player`, `.over`, `.winner`, `.checkout_hint()`→None). `games.create_game(mode, players, rounds=…, lives=…, legs_to_win=…)` is the factory; it returns `None` for X01 modes so the caller falls back to `X01Game`. Killer arming is configurable via `arm_mode` ∈ {`marks` (Standard — 3 marks on your own number), `double` (Hard — your own double)}, surfaced in `to_dict()` as `arm_mode` and selected in the setup UI as Standard/Hard. Players pick their numbers via a pre-game spin-the-wheel in the cinematic (`KillerSpin.jsx`, the `spin` phase after the rules card); the chosen numbers are POSTed to `/api/game/killer/numbers` → `KillerGame.assign_numbers()`. `to_dict()` carries `mode`, `mode_label`, and per-player `state` (cricket marks, ATC target, Killer number/lives/killer/out/arm, …) so the same scoreboard + cinematic UI render every mode. `BaseGame._visit_should_end()` lets Killer end a visit early on self-elimination; `KillerGame._advance_player` skips eliminated players. Covered by `test_games.py`.
+- **AI opponents across modes** (`ai.py`): `decide_target_label(game)` switches on `game.mode` to pick a sensible throw (Cricket: close own numbers high-first then score on opponents' open; ATC: current target; Shanghai: treble the round number; Count Up: T20; Killer: arm on own double, then treble the strongest alive foe; X01: checkout solver). `decide_target()` maps the label to ideal mm coords, then `execute_ai_throw` adds per-level Gaussian spread.
 - `checkout.suggest(score, darts_left, double_out)` returns a finishing path (e.g. `["T20","T20","DBull"]`) or `None`; preference-ordered so the first solution is throwable.
 - `test_game.py` (`python3 test_game.py`) covers the engine, checkout solver, and hit detail.
 
@@ -94,6 +97,8 @@ Detection works in a **canonical board space**: a 500×500px image where the cen
 ### Autodarts adapter (pluggable detection engine)
 
 `autodarts_adapter.py` skins the **Autodarts local board manager** (`:3180` WebSocket) as the detection engine, feeding each dart event into `detect.GAME` so the frontend and cinematic UI work unchanged. The `DETECTION_SOURCE` env var switches between `native` (our CV) and `autodarts`. The WS message schema (`/api/events`) was captured live from board manager v1.0.7; `_parse_message()` is the only place that knows the wire format — everything downstream uses `notation_to_hit()` which is unit-tested in `test_autodarts_adapter.py`.
+
+The adapter publishes board-manager status (`connected`, last `event`, `awaiting_takeout`, and a `ts` that only advances when the state changes) into `detect.STATUS["autodarts"]`, which rides along on the game-state WS (`detect.game_state()` adds it) and is also in `GET /api/config`. The cinematic top bar renders it (`AutodartsStatus` in `CinematicGame.jsx`): a stuck board (e.g. stuck mid-takeout) shows the non-progressing state and, after ~12s, a red "Stuck? … · Ns" so a silent hang is visible.
 
 To develop without a real board: `mock_autodarts.py` replays a scripted 501 game on `:3180` using the exact captured schema.
 
@@ -124,6 +129,7 @@ Broadcast-style overlay for live 2-player games driven entirely by WebSocket gam
 - `CinematicDemo.jsx` — canned scripted final (no live WS needed) for demos
 - `broadcastParts.jsx` — shared presentational components: `WalkOnCard`, `SideChar` (caricature flanking panels), lower-third score `Panel`, `BroadcastBoard`
 - `audio.js` — sound effects keyed by game event
+- `modeThemes.js` — per-mode visual identity (accent colour, emblem, themed rules-card entrance, win-shot call, confetti palette). `CinematicGame` is mode-aware: walk-on for every player → a click-to-continue `RulesCard` (themed, mode-specific how-to-play) → match. The board highlights the active player's targets (`BroadcastBoard` `targets`/`targetColor`); Cricket and Killer get dedicated lower-third scoreboards (`CricketScoreboard`, `KillerScoreboard`). Win/elimination moments use themed big-calls + confetti; the X01-only 180/ton calls are suppressed in other modes (and the spoken visit-total in `App.jsx` is X01-only).
 
 Player avatars are configured in `frontend/src/config/avatars.js`; caricature SVG art lives in `frontend/src/art/`.
 

@@ -62,27 +62,85 @@ def get_target_coord(label):
     y = r * math.cos(angle_rad)
     return x, y
 
+CRICKET_PRIORITY = [20, 19, 18, 17, 16, 15, 25]  # highest value first, bull last
+
+
+def _cricket_label(t, treble=True):
+    """Best aiming label to put marks on cricket number `t`."""
+    if t == 25:
+        return "DBull"            # 2 marks per hit — fastest way to close the bull
+    return ("T" if treble else "S") + str(t)
+
+
+def decide_target_label(game):
+    """Choose the throw LABEL (e.g. 'T20', 'DBull', '7') for the AI's current
+    turn, picking a sensible strategy for whichever game mode is in play."""
+    mode = getattr(game, "mode", "X01")
+    p = game.player
+
+    # ── Cricket: close your own numbers (high value first), then score on
+    # numbers an opponent still has open. ────────────────────────────────────
+    if mode == "Cricket":
+        marks = p.state.get("marks", {})
+        open_self = [t for t in CRICKET_PRIORITY if marks.get(str(t), 0) < 3]
+        if open_self:
+            return _cricket_label(open_self[0])
+        # Everything closed — pile on points where an opponent is still open.
+        scoreable = [t for t in CRICKET_PRIORITY
+                     if any(q.state.get("marks", {}).get(str(t), 0) < 3
+                            for q in game.players if q is not p)]
+        if scoreable:
+            return _cricket_label(scoreable[0])
+        return "T20"
+
+    # ── Around the Clock: aim the current target in the 1→20→Bull sequence. ──
+    if mode == "Around the Clock":
+        tgt = p.state.get("target", "1")
+        if tgt in ("Bull", "Done"):
+            return "Bull"
+        return str(tgt)           # any single/double/treble of the number counts
+
+    # ── Shanghai: only the round's number scores — go for the treble. ────────
+    if mode == "Shanghai":
+        return "T" + str(getattr(game, "target", 1))
+
+    # ── Killer: arm on your own double, then hammer the strongest opponent. ──
+    if mode == "Killer":
+        own = p.state.get("number")
+        if not p.state.get("killer"):
+            # Arm: hit your own double (Hard) or rack up 3 marks (Standard).
+            if getattr(game, "arm_mode", "marks") == "double":
+                return "D" + str(own)
+            return "T" + str(own)                 # treble = 3 marks → arm at once
+        # Armed: target the alive opponent with the most lives; treble = 3 off.
+        foes = [q for q in game.players
+                if q is not p and not q.state.get("out") and q.state.get("lives", 0) > 0]
+        if foes:
+            target = max(foes, key=lambda q: q.state.get("lives", 0))
+            return "T" + str(target.state.get("number"))
+        return "D" + str(own)                     # nothing to hit (shouldn't happen)
+
+    # ── Count Up / High Score: maximise points. ─────────────────────────────
+    if mode == "Count Up":
+        return "T20"
+
+    # ── X01: use the checkout solver, else build the score. ─────────────────
+    hint = suggest(p.score, game.darts_left, game.double_out)
+    if hint:
+        return hint[0]
+    if p.score > 60:
+        return "T20"
+    if p.score > 40:
+        return "20"
+    return "10"                   # arbitrary setup dart
+
+
 def decide_target(game):
     """
     Decide the best target for the current AI turn.
     Returns (x_mm, y_mm) of the ideal target.
     """
-    # Try to get a checkout hint
-    hint = suggest(game.player.score, game.darts_left, game.double_out)
-    if hint:
-        # Aim at the first dart of the checkout hint
-        return get_target_coord(hint[0])
-
-    # If no checkout, usually aim T20
-    # Unless score makes it bad to hit T20 (e.g. leaving a bogey)
-    # For MVP, just aim T20 if score > 60, otherwise aim single 20 or bull
-    if game.player.score > 60:
-        return get_target_coord("T20")
-    elif game.player.score > 40:
-        return get_target_coord("20")
-    else:
-        # Prevent bust setups if not on a finish
-        return get_target_coord("10") # arbitrary setup
+    return get_target_coord(decide_target_label(game))
 
 def execute_ai_throw(game, level):
     """
@@ -149,8 +207,10 @@ async def ai_loop():
                 await asyncio.sleep(2.0)
                 stepped_up = True
 
-            # Outside the lock, wait a realistic per-dart aiming time
-            delay = random.uniform(0.8, 1.8)
+            # Outside the lock, wait a realistic per-dart aiming time. Keep this
+            # comfortably longer than the throw animation (~1.1s to SCORING) so
+            # each dart's animation lands before the next is thrown.
+            delay = random.uniform(1.4, 2.2)
             await asyncio.sleep(delay)
 
             with detect.GAME_LOCK:

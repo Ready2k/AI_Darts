@@ -150,6 +150,128 @@ export const sound = {
     src.start(t); src.stop(t + dur + 0.1)
   },
 
+  // ── Killer mode SFX ──────────────────────────────────────────────────────
+
+  // Gunshot — a dart being "fired" in Killer.
+  gunshot() {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    // crack
+    const src = noise(c)
+    const hp = c.createBiquadFilter()
+    hp.type = 'highpass'; hp.frequency.value = 1100
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.6, t)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
+    src.connect(hp).connect(g).connect(c.destination)
+    src.start(t); src.stop(t + 0.13)
+    // body thump
+    const osc = c.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(130, t)
+    osc.frequency.exponentialRampToValueAtTime(42, t + 0.12)
+    const og = c.createGain()
+    og.gain.setValueAtTime(0.5, t)
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.15)
+    osc.connect(og).connect(c.destination)
+    osc.start(t); osc.stop(t + 0.16)
+  },
+
+  // Cash register "ka-ching" — a hit that counts toward arming.
+  kerching() {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const ding = (at, f) => {
+      const o = c.createOscillator()
+      o.type = 'triangle'; o.frequency.value = f
+      const g = c.createGain()
+      g.gain.setValueAtTime(0.0001, at)
+      g.gain.exponentialRampToValueAtTime(0.32, at + 0.008)
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.3)
+      o.connect(g).connect(c.destination)
+      o.start(at); o.stop(at + 0.32)
+    }
+    ding(t, 1318); ding(t + 0.09, 1760)   // rising two-note ka-ching
+  },
+
+  // Slide-rack "chk-chk" + spoken cue when a player becomes armed.
+  lockLoad() {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const click = (at) => {
+      const src = noise(c)
+      const bp = c.createBiquadFilter()
+      bp.type = 'bandpass'; bp.Q.value = 9; bp.frequency.value = 2700
+      const g = c.createGain()
+      g.gain.setValueAtTime(0.55, at)
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.05)
+      src.connect(bp).connect(g).connect(c.destination)
+      src.start(at); src.stop(at + 0.06)
+    }
+    click(t); click(t + 0.14)
+    this.say('Locked and loaded', { rate: 1.02, pitch: 0.8 })
+  },
+
+  // Comedic descending "ouch" — a life knocked off a player.
+  ouch() {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const o = c.createOscillator()
+    o.type = 'sawtooth'
+    o.frequency.setValueAtTime(540, t)
+    o.frequency.exponentialRampToValueAtTime(170, t + 0.2)
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.28, t + 0.02)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.24)
+    o.connect(g).connect(c.destination)
+    o.start(t); o.stop(t + 0.26)
+  },
+
+  // Decelerating ratchet ticks for the spin-the-wheel number picker.
+  _tick(c, at) {
+    const src = noise(c)
+    const bp = c.createBiquadFilter()
+    bp.type = 'bandpass'; bp.Q.value = 7; bp.frequency.value = 1900
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.13, at)
+    g.gain.exponentialRampToValueAtTime(0.001, at + 0.02)
+    src.connect(bp).connect(g).connect(c.destination)
+    src.start(at); src.stop(at + 0.025)
+  },
+  wheelSpin(durationMs = 3400) {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t0 = c.currentTime
+    const dur = durationMs / 1000
+    let t = 0, gap = 0.028
+    while (t < dur) {
+      this._tick(c, t0 + t)
+      t += gap
+      gap *= 1.062            // slow down toward the end
+    }
+  },
+  // Bright bell when the wheel lands.
+  ding() {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const o = c.createOscillator()
+    o.type = 'sine'
+    o.frequency.setValueAtTime(880, t)
+    o.frequency.exponentialRampToValueAtTime(1320, t + 0.02)
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.32, t + 0.01)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.5)
+    o.connect(g).connect(c.destination)
+    o.start(t); o.stop(t + 0.52)
+  },
+
   // Referee / MC voice.
   say(text, { rate = 0.98, pitch = 0.92 } = {}) {
     if (!enabled || !window.speechSynthesis) return

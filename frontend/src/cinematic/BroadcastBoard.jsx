@@ -58,7 +58,36 @@ function Dart({ d }) {
   )
 }
 
-export default function BroadcastBoard({ darts = [], pops = [] }) {
+// Target highlight overlays. `targets` is a list of board numbers the active
+// player needs (1-20, or 25 for the bull); they pulse in the player's accent
+// colour so a Cricket / Around-the-Clock / Shanghai player can see their aim.
+function TargetHighlights({ targets, color = '#fbbf24' }) {
+  if (!targets || !targets.length) return null
+  return (
+    <g className="bb-targets" pointerEvents="none">
+      {targets.map((n) => {
+        if (n === 25) {
+          return (
+            <circle key="bull" cx={C} cy={C} r={R.bulls + 3} fill="none"
+              stroke={color} strokeWidth="3.5" className="bb-target-seg"
+              style={{ '--tcol': color }} />
+          )
+        }
+        const idx = SEGMENTS.indexOf(n)
+        if (idx < 0) return null
+        const t0 = deg(idx * 18 - 9)
+        const t1 = deg(idx * 18 + 9)
+        return (
+          <path key={n} d={sector(R.bulls, R.d1, t0, t1)} fill={color}
+            stroke={color} strokeWidth="2.5" className="bb-target-seg"
+            style={{ '--tcol': color }} />
+        )
+      })}
+    </g>
+  )
+}
+
+export default function BroadcastBoard({ darts = [], pops = [], targets = [], targetColor }) {
   const sectors = []
   for (let i = 0; i < 20; i++) {
     const t0 = deg(i * 18 - 9)
@@ -131,6 +160,8 @@ export default function BroadcastBoard({ darts = [], pops = [] }) {
       <circle cx={C} cy={C} r={R.bulls} fill={COL.green} stroke={COL.wire} strokeWidth="1.2" />
       <circle cx={C} cy={C} r={R.bull} fill={COL.red} stroke={COL.wire} strokeWidth="1.2" />
 
+      <TargetHighlights targets={targets} color={targetColor} />
+
       {numbers}
 
       <circle cx={C} cy={C} r={R.surround} fill="url(#bbSheen)" pointerEvents="none" />
@@ -189,6 +220,15 @@ export default function BroadcastBoard({ darts = [], pops = [] }) {
           100% { opacity: 0; transform: translateY(-18px); }
         }
         .bb-pop { transform-box: fill-box; transform-origin: center; }
+        .bb-target-seg {
+          fill-opacity: 0.16;
+          filter: drop-shadow(0 0 8px var(--tcol, #fbbf24));
+          animation: bb-target-pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes bb-target-pulse {
+          0%, 100% { fill-opacity: 0.10; stroke-opacity: 0.65; }
+          50%      { fill-opacity: 0.30; stroke-opacity: 1; }
+        }
       `}</style>
     </svg>
   )
