@@ -12,6 +12,9 @@ from fastapi.concurrency import run_in_threadpool
 import check_cameras
 import align
 import detect
+# Install stdout+stderr → logs/ mirroring as early as possible so even
+# import-time output and crashes are captured. Idempotent.
+detect._setup_logging()
 import history
 import leaderboard
 import ai

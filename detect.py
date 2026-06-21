@@ -964,10 +964,42 @@ def draw_score_bar(width, gm, dart_state, confidence):
     return bar
 
 
+_LOGGING_INSTALLED = False
+LOG_KEEP = 10  # session logs to retain (N-1 prior runs are pruned, + this run = N)
+
+
 def _setup_logging():
-    """Mirror all stdout to darts.log (appended each run)."""
+    """Mirror stdout *and* stderr to a per-session file under logs/.
+
+    Each run writes logs/darts_YYYYMMDD_HHMMSS.log and points the stable
+    `darts.log` symlink at it (the debug-snapshot endpoint and humans both
+    read `darts.log`). Capturing stderr too means tracebacks/crashes — the
+    things you actually want when troubleshooting a hang — land in the file
+    instead of vanishing with the terminal. Idempotent: safe to call twice
+    (e.g. uvicorn import + __main__)."""
+    global _LOGGING_INSTALLED
+    if _LOGGING_INSTALLED:
+        return Path("darts.log")
     import sys as _sys
-    log_path = Path("darts.log")
+    import time as _t
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    # Prune old sessions before creating this run's file: keep the newest
+    # LOG_KEEP-1 so that, with the new file, at most LOG_KEEP remain.
+    try:
+        existing = sorted(
+            log_dir.glob("darts_*.log"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in existing[max(0, LOG_KEEP - 1):]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    session_path = log_dir / f"darts_{_t.strftime('%Y%m%d_%H%M%S')}.log"
 
     class _Tee:
         def __init__(self, *streams):
@@ -985,10 +1017,24 @@ def _setup_logging():
                 except Exception:
                     pass
 
-    f = open(log_path, "a")
-    import time as _t
+    # Line-buffered so the file stays current even if the process is killed.
+    f = open(session_path, "a", buffering=1)
     f.write(f"\n{'='*60}\n{_t.strftime('%Y-%m-%d %H:%M:%S')} — session start\n")
+
+    # Point the stable `darts.log` name at this session's file.
+    pointer = Path("darts.log")
+    try:
+        if pointer.exists() or pointer.is_symlink():
+            pointer.unlink()
+        pointer.symlink_to(session_path)
+    except OSError:
+        pass  # e.g. filesystem without symlink support — session file still written
+
     _sys.stdout = _Tee(_sys.__stdout__, f)
+    _sys.stderr = _Tee(_sys.__stderr__, f)
+    _LOGGING_INSTALLED = True
+    print(f"[logging] mirroring stdout+stderr to {session_path}")
+    return session_path
 
 
 _cameras_free = threading.Event()   # set while no worker is holding the cameras

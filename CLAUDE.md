@@ -92,7 +92,8 @@ Detection works in a **canonical board space**: a 500×500px image where the cen
 | `bull_reference.json` | Per-camera bull pixel coords (set with `B` key during detection) |
 | `board_config.json` | `rotation_deg` offset (legacy — currently unused; board orientation is encoded in the alignment homographies) |
 | `match_history.json` | Completed matches (winner, players, legs/sets, averages) |
-| `darts.log` | Session log (stdout tee'd here during detection) |
+| `logs/darts_<ts>.log` | Per-session log — `detect._setup_logging()` tees **both** stdout and stderr here. Installed at `server.py` import so it captures everything (incl. import-time crashes) regardless of launch path; idempotent. Each restart prunes old sessions to the newest `LOG_KEEP` (default 10). |
+| `darts.log` | Symlink to the newest `logs/darts_<ts>.log` (stable name read by the debug-snapshot endpoint and humans). |
 
 ### Autodarts adapter (pluggable detection engine)
 
