@@ -1016,6 +1016,17 @@ def _setup_logging():
                     s.flush()
                 except Exception:
                     pass
+        def isatty(self):
+            # uvicorn (and others) probe this to decide on coloured output;
+            # report the real terminal stream's value.
+            try:
+                return self._s[0].isatty()
+            except Exception:
+                return False
+        def __getattr__(self, name):
+            # Delegate anything else (fileno, encoding, …) to the real stream
+            # so the tee behaves like the stdout/stderr it replaced.
+            return getattr(self._s[0], name)
 
     # Line-buffered so the file stays current even if the process is killed.
     f = open(session_path, "a", buffering=1)
