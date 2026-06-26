@@ -308,6 +308,22 @@ def undo_game():
     return {"ok": ok, "game": detect.game_state()}
 
 
+@app.post("/api/game/pause")
+async def pause_game(request: Request):
+    """Pause/resume the live game. Body `{paused: bool}` sets it explicitly;
+    omit `paused` to toggle. While paused the AI holds its turn and incoming
+    Autodarts board throws are ignored (the WS broadcast carries `paused` so the
+    UI can show a paused overlay)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cur = detect.STATUS.get("paused", False)
+    paused = bool(body.get("paused", not cur))
+    detect.STATUS["paused"] = paused
+    return {"ok": True, "paused": paused, "game": detect.game_state()}
+
+
 @app.post("/api/game/end")
 def end_game():
     """Abandon the current game (no winner recorded)."""

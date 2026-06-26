@@ -169,6 +169,10 @@ async def ai_loop():
         try:
             await asyncio.sleep(0.5)
 
+            # Game paused → the AI holds its turn (no step-up, no throw).
+            if detect.STATUS.get("paused"):
+                continue
+
             with detect.GAME_LOCK:
                 game = detect.GAME
                 if not game or game.over:

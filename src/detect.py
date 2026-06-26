@@ -112,7 +112,7 @@ def new_game(**overrides):
 # Live detection phase, surfaced to the web UI so it can prompt "remove darts".
 # game_gen is bumped every time a new game is started via the API so the detect
 # loop can notice the game was replaced and flush its per-turn local state.
-STATUS = {"phase": "idle", "awaiting_clear": False, "game_gen": 0}
+STATUS = {"phase": "idle", "awaiting_clear": False, "game_gen": 0, "paused": False}
 
 
 def game_state():
@@ -122,6 +122,7 @@ def game_state():
     if d is not None:
         d["detect_phase"] = STATUS["phase"]
         d["awaiting_clear"] = STATUS["awaiting_clear"]
+        d["paused"] = STATUS.get("paused", False)
         if STATUS.get("autodarts") is not None:
             d["autodarts"] = STATUS["autodarts"]
     return d

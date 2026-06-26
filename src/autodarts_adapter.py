@@ -207,6 +207,18 @@ class AutodartsConsumer:
             self._recorded = max(self._recorded, len(throws))
             return results
 
+        # When it's an AI player's turn, the AI fully owns its (virtual) visit.
+        # Ignore board throws/takeout so a stray event — e.g. the human pulling
+        # their darts during the AI's turn — can't record into the game or
+        # truncate the AI's visit via the short-visit auto-advance below. Keep
+        # the counter/closed state in sync so real darts aren't backfilled when
+        # play returns to the human (a new visit rolls numThrows back → reset).
+        if getattr(game.player, "is_ai", False):
+            self._recorded = len(throws)
+            if event == "Takeout started":
+                self._closed = True
+            return results
+
         if len(throws) > self._recorded:
             for t in throws[self._recorded:]:
                 if self._visit_done or game.over:
@@ -237,6 +249,12 @@ def _apply_to_shared_game(consumer, msg):
     """Thread-safe: apply a message to the shared detect.GAME (server.GameHub then
     broadcasts the change to the cinematic frontend)."""
     import detect
+    # Paused → ignore board events. Keep the consumer's counter in step with the
+    # board so darts thrown while paused aren't backfilled into the game on resume.
+    if detect.STATUS.get("paused"):
+        if isinstance(msg, dict) and (msg.get("data") or {}).get("throws") is not None:
+            consumer._recorded = len(msg["data"]["throws"])
+        return
     with detect.GAME_LOCK:
         if detect.GAME is None:
             return
