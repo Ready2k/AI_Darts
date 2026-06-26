@@ -1311,6 +1311,12 @@ function App() {
                       body: JSON.stringify({ numbers }),
                     }).catch(() => {})
                   }
+                  onPause={(paused) =>
+                    fetch(`${API_URL}/game/pause`, {
+                      method: 'POST', headers: JSON_HEADERS,
+                      body: JSON.stringify({ paused }),
+                    }).catch(() => {})
+                  }
                 />
               </div>
             ) : (

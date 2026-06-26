@@ -4,7 +4,7 @@
 // state from App. It reuses the broadcast presentational parts (walk-on cards,
 // flanking caricatures, lower-third score panels) and the cin-* stylesheet.
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Volume2, VolumeX, Star, Move } from 'lucide-react'
+import { X, Volume2, VolumeX, Star, Move, Pause, Play } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
 import { CSS, WalkOnCard, RulesCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti } from './broadcastParts'
 import { themeFor } from './modeThemes'
@@ -178,7 +178,43 @@ function poseForState(animState) {
   }
 }
 
-export default function CinematicGame({ game, avatarMap = {}, animState, boardDarts, cameraSrc, onExit, onAssignNumbers }) {
+// Per-turn spoken intro: what the active player needs this visit. Mode-aware so
+// every game gets a quick "{player} needs …" call when their turn comes around.
+function turnIntro(game, i) {
+  const p = game?.players?.[i]
+  if (!p) return null
+  const name = p.name || 'Player'
+  const st = p.state || {}
+  switch (game.mode ?? 'X01') {
+    case 'Around the Clock': {
+      const t = st.target
+      return t ? `${name} needs ${t === 'Bull' ? 'bull' : t}` : `${name} to throw`
+    }
+    case 'Shanghai':
+      return `${name} needs ${st.target ?? game.round}`
+    case 'Killer':
+      if (st.out) return null
+      return st.killer ? `${name}, you're a killer` : `${name}, arm on ${st.number ?? 'your number'}`
+    case 'Cricket':
+    case 'Count Up':
+      return `${name} to throw`
+    default: // X01
+      return `${name} needs ${p.score}`
+  }
+}
+
+// A monotonic "progress" metric for the active player, used to fire a success
+// sound the moment they hit what they needed. Only target-based modes qualify;
+// modes where every dart scores (X01 / Count Up) return null (no discrete hit).
+function activeProgress(game, i) {
+  const p = game?.players?.[i]
+  if (!p) return null
+  if ((game.mode ?? 'X01') === 'Around the Clock') return p.state?.idx ?? 0
+  if ((game.mode ?? 'X01') === 'Shanghai') return p.score ?? 0
+  return null
+}
+
+export default function CinematicGame({ game, avatarMap = {}, animState, boardDarts, cameraSrc, onExit, onAssignNumbers, onPause }) {
   const [muted, setMuted] = useState(!sound.enabled)
   const [phase, setPhase] = useState('match') // 'walkon' | 'match'
   const [walkonIdx, setWalkonIdx] = useState(0)
@@ -189,6 +225,9 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const prevSeqRef = useRef(game?.dart_seq ?? 0)
   const bigCallTimer = useRef(null)
   const prevKillerRef = useRef(null)
+  const prevCricketRef = useRef(null)
+  const prevTurnRef = useRef(null)
+  const prevProgressRef = useRef(null)
 
   // ── Draggable camera inset ────────────────────────────────────────────────
   // Position is the inset's top-left within the board stage, in px. null = the
@@ -390,6 +429,67 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     prevKillerRef.current = cur
   }, [game])
 
+  // ── Cricket call-outs: announce when a number is closed, and whether it can
+  // now be scored against (an opponent still has it open) or is dead. Diff each
+  // player's marks; a target crossing 3 marks is a close. ──────────────────────
+  useEffect(() => {
+    if (!game || game.mode !== 'Cricket') { prevCricketRef.current = null; return }
+    const players = game.players || []
+    const cur = players.map((p) => ({ ...(p.state?.marks || {}) }))
+    const prev = prevCricketRef.current
+    if (prev && prev.length === cur.length) {
+      cur.forEach((marks, i) => {
+        const pr = prev[i] || {}
+        Object.keys(marks).forEach((k) => {
+          const wasClosed = (pr[k] ?? 0) >= 3
+          const nowClosed = (marks[k] ?? 0) >= 3
+          if (!wasClosed && nowClosed) {
+            const label = k === '25' ? 'Bull' : k
+            // Scoreable while any OTHER player still has this number open (<3).
+            const scoreable = cur.some((m, j) => j !== i && (m[k] ?? 0) < 3)
+            const name = players[i]?.name || 'Player'
+            sound.kerching()   // success cue: a number just closed
+            sound.say(
+              scoreable
+                ? `${name} closes ${label}. Open for points.`
+                : `${name} closes ${label}. Dead number.`,
+              { rate: 0.95 },
+            )
+          }
+        })
+      })
+    }
+    prevCricketRef.current = cur
+  }, [game])
+
+  // ── Per-turn intro + target-hit success. On turn handover, announce what the
+  // active player needs ("{player} needs 1"); within a turn, play a success cue
+  // the instant their progress advances (e.g. ATC idx ↑, Shanghai score ↑). ───
+  useEffect(() => {
+    if (phase !== 'match' || !game || game.over) {
+      prevTurnRef.current = null
+      prevProgressRef.current = null
+      return
+    }
+    const cur = game.current
+    if (prevTurnRef.current !== cur) {
+      // New visit → announce the intro and reset the success baseline.
+      prevTurnRef.current = cur
+      prevProgressRef.current = activeProgress(game, cur)
+      const phrase = turnIntro(game, cur)
+      if (phrase) sound.say(phrase, { rate: 0.96 })
+      return
+    }
+    const prog = activeProgress(game, cur)
+    if (prevProgressRef.current != null && prog != null && prog > prevProgressRef.current) {
+      sound.kerching()   // they hit what they needed
+    }
+    prevProgressRef.current = prog
+  }, [game, phase])
+
+  const paused = !!game?.paused
+  const togglePause = () => onPause?.(!paused)
+
   const toggleMute = () => {
     const next = !muted
     setMuted(next)
@@ -472,6 +572,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           {phase === 'walkon' && (
             <button onClick={skipIntro} className="cin-chipbtn">Skip to rules</button>
           )}
+          {phase === 'match' && !game.over && onPause && (
+            <button onClick={togglePause} className="cin-chipbtn"
+              title={paused ? 'Resume game' : 'Pause game'}>
+              {paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+            </button>
+          )}
           <button onClick={toggleMute} className="cin-chipbtn" title="Toggle sound">
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
@@ -480,6 +586,20 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           </button>
         </div>
       </div>
+
+      {/* Paused overlay */}
+      {phase === 'match' && paused && !game.over && (
+        <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-black/70 backdrop-blur-sm">
+          <div className="flex items-center gap-4 text-white">
+            <Pause className="w-12 h-12" />
+            <span className="text-5xl font-black tracking-[0.2em] uppercase">Paused</span>
+          </div>
+          <button onClick={togglePause}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold uppercase tracking-wider transition-colors">
+            <Play className="w-5 h-5" /> Resume
+          </button>
+        </div>
+      )}
 
       {/* Walk-on intro */}
       {phase === 'walkon' && <WalkOnCard key={walkonIdx} pl={cinPlayers[walkonIdx]} />}
