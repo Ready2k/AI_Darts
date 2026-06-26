@@ -26,6 +26,139 @@ function noise(c) {
   return src
 }
 
+// ── Crowd ambience bed ───────────────────────────────────────────────────────
+// A single looping filtered-noise source through a lowpass + gain we ramp.
+// start()/stop() manage the lifecycle; setIntensity(0..1) sets the resting
+// level; roar() swells for a big moment; hush() drops to near-silence for a
+// checkout attempt (then restore() / setIntensity brings it back).
+const crowdState = {
+  src: null,
+  lp: null,
+  gain: null,
+  base: 0.05,       // current resting intensity (0..1) mapped to a gain
+  running: false,
+}
+
+// Map a 0..1 intensity to an actual gain value (kept low — it's a bed, not a roar).
+function crowdGainFor(intensity) {
+  return 0.012 + Math.max(0, Math.min(1, intensity)) * 0.07
+}
+
+export const crowd = {
+  start() {
+    if (!enabled) return
+    if (crowdState.running) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const src = noise(c)
+    src.loop = true
+    const lp = c.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 760            // muffled murmur
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 1.2)  // fade in
+    src.connect(lp).connect(g).connect(c.destination)
+    src.start(t)
+    crowdState.src = src
+    crowdState.lp = lp
+    crowdState.gain = g
+    crowdState.running = true
+  },
+  stop() {
+    const c = ctx
+    if (crowdState.src) {
+      try {
+        if (c && crowdState.gain) {
+          const t = c.currentTime
+          crowdState.gain.gain.cancelScheduledValues(t)
+          crowdState.gain.gain.setValueAtTime(crowdState.gain.gain.value, t)
+          crowdState.gain.gain.linearRampToValueAtTime(0.0001, t + 0.3)
+          crowdState.src.stop(t + 0.35)
+        } else {
+          crowdState.src.stop()
+        }
+      } catch { /* already stopped */ }
+    }
+    crowdState.src = null
+    crowdState.lp = null
+    crowdState.gain = null
+    crowdState.running = false
+  },
+  setIntensity(v) {
+    crowdState.base = Math.max(0, Math.min(1, v))
+    if (!enabled || !crowdState.running || !crowdState.gain) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    crowdState.gain.gain.cancelScheduledValues(t)
+    crowdState.gain.gain.setValueAtTime(crowdState.gain.gain.value, t)
+    crowdState.gain.gain.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 0.6)
+  },
+  // Swell up then settle back to the resting intensity (a big-moment roar).
+  roar() {
+    if (!enabled || !crowdState.running || !crowdState.gain || !crowdState.lp) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const g = crowdState.gain.gain
+    const f = crowdState.lp.frequency
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(g.value, t)
+    g.linearRampToValueAtTime(0.22, t + 0.35)                         // swell
+    g.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 1.9) // settle
+    f.cancelScheduledValues(t)
+    f.setValueAtTime(f.value, t)
+    f.linearRampToValueAtTime(2000, t + 0.35)   // brighten on the roar
+    f.linearRampToValueAtTime(760, t + 1.9)
+  },
+  // Drop to near-silence (a tense hush as a player goes for a finish).
+  hush() {
+    if (!enabled || !crowdState.running || !crowdState.gain) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+    const g = crowdState.gain.gain
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(g.value, t)
+    g.linearRampToValueAtTime(0.004, t + 0.5)
+  },
+}
+
+// ── Walk-on theme stings ─────────────────────────────────────────────────────
+// A few sequenced oscillator notes per persona vibe. Synth-only; respects mute.
+const THEME_SEQS = {
+  // Low horn fifths — Viking warhorn.
+  viking: { type: 'sawtooth', gain: 0.18, notes: [
+    [98.0, 0, 0.5], [147.0, 0, 0.5], [98.0, 0.55, 0.7], [196.0, 0.55, 0.7],
+  ] },
+  // Power chord — root + fifth + octave, all at once, gritty.
+  rockstar: { type: 'square', gain: 0.12, notes: [
+    [110, 0, 0.9], [164.8, 0, 0.9], [220, 0, 0.9], [330, 0.18, 0.7],
+  ] },
+  // Twangy major triad arpeggio — cowboy.
+  cowboy: { type: 'triangle', gain: 0.16, notes: [
+    [196, 0, 0.25], [246.9, 0.18, 0.25], [293.7, 0.36, 0.45], [392, 0.6, 0.5],
+  ] },
+  // Mysterious rising minor — ninja / shadow.
+  ninja: { type: 'sine', gain: 0.16, notes: [
+    [220, 0, 0.3], [261.6, 0.22, 0.3], [329.6, 0.44, 0.6],
+  ] },
+  // Shimmering arpeggio up — wizard.
+  wizard: { type: 'triangle', gain: 0.14, notes: [
+    [261.6, 0, 0.22], [329.6, 0.14, 0.22], [392, 0.28, 0.22], [523.3, 0.42, 0.5],
+  ] },
+  // Bright synth stab — cyberpunk / neon.
+  cyber: { type: 'sawtooth', gain: 0.12, notes: [
+    [440, 0, 0.18], [440, 0.2, 0.18], [587.3, 0.4, 0.5], [880, 0.4, 0.5],
+  ] },
+  // Pubby oompah two-note — the local.
+  pub: { type: 'square', gain: 0.13, notes: [
+    [130.8, 0, 0.28], [196, 0.3, 0.28], [130.8, 0.6, 0.28], [261.6, 0.6, 0.5],
+  ] },
+  // Regal trumpet fanfare — default / posh.
+  fanfare: { type: 'square', gain: 0.13, notes: [
+    [392, 0, 0.18], [392, 0.2, 0.18], [392, 0.4, 0.18], [523.3, 0.6, 0.7], [659.3, 0.6, 0.7],
+  ] },
+}
+
 // Must be called from a user-gesture call stack (the demo button click).
 export function unlockAudio() {
   const c = ac()
@@ -81,7 +214,10 @@ export const sound = {
   get enabled() { return enabled },
   setEnabled(v) {
     enabled = v
-    if (!v) window.speechSynthesis?.cancel()
+    if (!v) {
+      window.speechSynthesis?.cancel()
+      crowd.stop()      // silence the ambience bed on mute
+    }
   },
 
   // Dart leaving the hand.
@@ -212,7 +348,8 @@ export const sound = {
       src.start(at); src.stop(at + 0.06)
     }
     click(t); click(t + 0.14)
-    this.say('Locked and loaded', { rate: 1.02, pitch: 0.8 })
+    // The spoken "armed" call is now varied by the commentary bank at the call
+    // site (CinematicGame Killer effect); lockLoad() is just the rack SFX.
   },
 
   // Comedic descending "ouch" — a life knocked off a player.
@@ -272,6 +409,27 @@ export const sound = {
     o.start(t); o.stop(t + 0.52)
   },
 
+  // Walk-on entrance sting — a few sequenced notes themed to the persona.
+  // themeId falls back to a regal fanfare for anything unmapped.
+  walkOnTheme(themeId) {
+    if (!enabled) return
+    const c = ac(); if (!c) return
+    const seq = THEME_SEQS[themeId] || THEME_SEQS.fanfare
+    const t0 = c.currentTime + 0.02
+    seq.notes.forEach(([freq, at, dur]) => {
+      const o = c.createOscillator()
+      o.type = seq.type
+      o.frequency.value = freq
+      const g = c.createGain()
+      const start = t0 + at
+      g.gain.setValueAtTime(0.0001, start)
+      g.gain.exponentialRampToValueAtTime(seq.gain, start + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, start + dur)
+      o.connect(g).connect(c.destination)
+      o.start(start); o.stop(start + dur + 0.05)
+    })
+  },
+
   // Referee / MC voice.
   say(text, { rate = 0.98, pitch = 0.92 } = {}) {
     if (!enabled || !window.speechSynthesis) return
@@ -286,5 +444,6 @@ export const sound = {
 
   stop() {
     window.speechSynthesis?.cancel()
+    crowd.stop()
   },
 }

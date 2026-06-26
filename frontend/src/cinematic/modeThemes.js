@@ -11,6 +11,9 @@ export const MODE_THEMES = {
     cls: 'th-x01',
     win: { text: 'GAME SHOT', sub: 'AND THE MATCH' },
     confetti: ['#22d3ee', '#7ff0ff', '#f8fafc', '#fbbf24'],
+    // winScene: the win-moment finale descriptor. `replay` enables the slow-mo
+    // zoom on the winning dart; `headline`/`sub` set the winner-card crown text.
+    winScene: { replay: true, headline: 'GAME SHOT', sub: 'AND THE MATCH', crown: 'CHAMPION' },
   },
   'Cricket': {
     accent: '#34d399',
@@ -19,6 +22,7 @@ export const MODE_THEMES = {
     cls: 'th-cricket',
     win: { text: 'GAME SHOT', sub: 'CLOSED OUT' },
     confetti: ['#34d399', '#a7f3d0', '#f8fafc', '#fbbf24'],
+    winScene: { replay: true, headline: 'CLOSED OUT', sub: 'EVERY NUMBER SHUT', crown: 'CHAMPION' },
   },
   'Around the Clock': {
     accent: '#fbbf24',
@@ -27,6 +31,7 @@ export const MODE_THEMES = {
     cls: 'th-clock',
     win: { text: 'FULL CLOCK', sub: 'ROUND THE WORLD' },
     confetti: ['#fbbf24', '#fde68a', '#f8fafc', '#22d3ee'],
+    winScene: { replay: true, headline: 'FULL CLOCK', sub: 'ROUND THE WORLD', crown: 'CHAMPION' },
   },
   'Shanghai': {
     accent: '#fb7185',
@@ -35,6 +40,7 @@ export const MODE_THEMES = {
     cls: 'th-shanghai',
     win: { text: 'GAME SHOT', sub: 'TOP OF THE TABLE' },
     confetti: ['#fb7185', '#fecdd3', '#f8fafc', '#fbbf24'],
+    winScene: { replay: true, headline: 'TOP OF THE TABLE', sub: 'HIGHEST TALLY', crown: 'CHAMPION' },
   },
   'Count Up': {
     accent: '#a78bfa',
@@ -43,6 +49,7 @@ export const MODE_THEMES = {
     cls: 'th-countup',
     win: { text: 'TOP SCORE', sub: 'HIGHEST WINS' },
     confetti: ['#a78bfa', '#ddd6fe', '#f8fafc', '#34d399'],
+    winScene: { replay: true, headline: 'TOP SCORE', sub: 'HIGHEST TALLY WINS', crown: 'CHAMPION' },
   },
   'Killer': {
     accent: '#f97316',
@@ -51,10 +58,83 @@ export const MODE_THEMES = {
     cls: 'th-killer',
     win: { text: 'LAST ONE STANDING', sub: 'WINNER' },
     confetti: ['#f97316', '#fdba74', '#f8fafc', '#ef4444'],
+    winScene: { replay: true, headline: 'LAST ONE STANDING', sub: 'THE SOLE SURVIVOR', crown: 'SURVIVOR' },
   },
 }
 
+// Resolve a mode's win-scene descriptor, with an X01 fallback.
+export const winSceneFor = (mode) =>
+  (MODE_THEMES[mode] || MODE_THEMES['X01']).winScene || MODE_THEMES['X01'].winScene
+
 export const themeFor = (mode) => MODE_THEMES[mode] || MODE_THEMES['X01']
+
+// ── Venues ──────────────────────────────────────────────────────────────────
+// A venue re-skins the arena backdrop (the cin-bg gradient + the two roving
+// cin-spot tints) by setting CSS custom properties on the cinematic root. Each
+// venue is just a bag of CSS vars + a label, so a venue picker can be wired up
+// later without touching the stylesheet. `vars` is spread straight onto the
+// root container's inline style in CinematicGame.
+export const VENUES = {
+  allyPally: {
+    label: 'Ally Pally',
+    vars: {
+      '--cin-bg-1': '#16412e',   // deep championship green
+      '--cin-bg-2': '#08160f',
+      '--cin-bg-3': '#030705',
+      '--cin-spot-a': 'rgba(120,255,180,0.10)',
+      '--cin-spot-b': 'rgba(255,235,140,0.07)',
+      '--cin-spot-c': 'rgba(120,255,200,0.06)',
+    },
+  },
+  vegasNeon: {
+    label: 'Vegas Neon',
+    vars: {
+      '--cin-bg-1': '#3a1052',   // electric purple
+      '--cin-bg-2': '#140822',
+      '--cin-bg-3': '#06030c',
+      '--cin-spot-a': 'rgba(255,120,235,0.12)',
+      '--cin-spot-b': 'rgba(120,200,255,0.10)',
+      '--cin-spot-c': 'rgba(255,210,120,0.07)',
+    },
+  },
+  smokyPub: {
+    label: 'Smoky Pub',
+    vars: {
+      '--cin-bg-1': '#4a3a22',   // warm amber haze
+      '--cin-bg-2': '#1b150c',
+      '--cin-bg-3': '#0a0805',
+      '--cin-spot-a': 'rgba(255,200,120,0.10)',
+      '--cin-spot-b': 'rgba(255,150,90,0.07)',
+      '--cin-spot-c': 'rgba(200,160,110,0.06)',
+    },
+  },
+  bluesArena: {
+    label: 'Blues Arena',
+    vars: {
+      '--cin-bg-1': '#222b4d',   // the original deep-blue stage
+      '--cin-bg-2': '#0a0d18',
+      '--cin-bg-3': '#04050a',
+      '--cin-spot-a': 'rgba(125,170,255,0.10)',
+      '--cin-spot-b': 'rgba(255,130,180,0.08)',
+      '--cin-spot-c': 'rgba(160,255,220,0.06)',
+    },
+  },
+}
+
+// Default venue per game mode. Sensible thematic pairings; no settings UI yet —
+// a picker can override this later by passing a venue key into venueFor's caller.
+const MODE_VENUE = {
+  'X01': 'allyPally',
+  'Cricket': 'bluesArena',
+  'Around the Clock': 'vegasNeon',
+  'Shanghai': 'vegasNeon',
+  'Count Up': 'smokyPub',
+  'Killer': 'smokyPub',
+}
+
+// Resolve a venue: explicit key wins, else the mode default, else Ally Pally.
+export const venueFor = (mode, key) =>
+  VENUES[key] || VENUES[MODE_VENUE[mode]] || VENUES.allyPally
 
 // CSS for the themed rules-card emblem entrances + win flourishes. Appended to
 // the shared cin-* stylesheet (see broadcastParts CSS).

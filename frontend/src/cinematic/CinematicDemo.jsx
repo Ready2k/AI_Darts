@@ -3,13 +3,12 @@
 // missed-double drama → game shot, confetti, slow-mo replay → winner card.
 // Self-contained: pure SVG/CSS visuals, WebAudio + SpeechSynthesis sound.
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { X, Volume2, VolumeX, Trophy, RotateCcw, FastForward } from 'lucide-react'
+import { X, Volume2, VolumeX, FastForward } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
 import { mmToPct } from './geometry'
 import { SCRIPTS } from './scripts'
 import { sound } from './audio'
-import Caricature from '../art/Caricature'
-import { CSS, WalkOnCard, SideChar, Panel, Confetti } from './broadcastParts'
+import { CSS, WalkOnCard, SideChar, Panel, Confetti, WinnerCard } from './broadcastParts'
 
 const CANCEL = Symbol('cancelled')
 
@@ -329,40 +328,19 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       {/* Winner card */}
       {phase === 'winner' && !replaying && winner && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm px-4">
-          <div className="cin-winner">
-            <Trophy className="w-10 h-10 text-amber-400 mx-auto" />
-            <div className="text-[11px] tracking-[0.55em] text-amber-300/90 font-bold mt-2">CHAMPION</div>
-            <div className="w-36 h-36 mx-auto my-5 rounded-full overflow-hidden border-4"
-              style={{ borderColor: winner.color, background: winner.cardBg, boxShadow: `0 0 50px ${winner.color}55` }}>
-              <Caricature variant={winner.variant} pose="celebrate" framing="bust" shirt={winner.color} className="w-full h-full" />
-            </div>
-            <div className="text-3xl font-black uppercase tracking-wide">{winner.name}</div>
-            <div className="text-white/50 tracking-[0.3em] text-xs font-bold uppercase mt-1">“{winner.nick}”</div>
-
-            <div className="grid grid-cols-4 gap-2 mt-6">
-              {[
-                ['3-DART AVG', finalStats[winnerIdx].avg.toFixed(1)],
-                ['180s', finalStats[winnerIdx].maxima],
-                ['CHECKOUT', checkoutPct],
-                ['DARTS', finalStats[winnerIdx].darts],
-              ].map(([k, v]) => (
-                <div key={k} className="rounded-xl bg-white/5 border border-white/10 py-3">
-                  <div className="text-xl font-black tabular-nums" style={{ color: winner.color }}>{v}</div>
-                  <div className="text-[9px] tracking-[0.2em] text-white/40 font-bold mt-0.5">{k}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2 mt-6">
-              <button onClick={watchAgain} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-sm font-bold tracking-wider uppercase transition-colors">
-                <RotateCcw className="w-4 h-4" /> Winning dart
-              </button>
-              <button onClick={onExit} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-bold tracking-wider uppercase transition-colors"
-                style={{ background: `${winner.color}22`, borderColor: `${winner.color}77`, color: winner.color }}>
-                <X className="w-4 h-4" /> Exit show
-              </button>
-            </div>
-          </div>
+          <WinnerCard
+            winner={winner}
+            crown="CHAMPION"
+            accent={winner.color}
+            stats={[
+              ['3-DART AVG', finalStats[winnerIdx].avg.toFixed(1)],
+              ['180s', finalStats[winnerIdx].maxima],
+              ['CHECKOUT', checkoutPct],
+              ['DARTS', finalStats[winnerIdx].darts],
+            ]}
+            onReplay={watchAgain}
+            onExit={onExit}
+          />
         </div>
       )}
     </div>

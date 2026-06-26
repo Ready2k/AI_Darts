@@ -2,10 +2,13 @@
 // CinematicDemo and the live CinematicGame view: the blister-pack walk-on
 // card, the flanking match-side caricatures, the lower-third score panel,
 // the confetti burst, and the full cin-* stylesheet.
-import { useMemo } from 'react'
-import { Trophy } from 'lucide-react'
+import { useMemo, useRef, useState, useEffect } from 'react'
+import { Trophy, RotateCcw, X } from 'lucide-react'
 import Caricature, { Accessory } from '../art/Caricature'
-import { THEME_CSS } from './modeThemes'
+import BroadcastBoard from './BroadcastBoard'
+import { mmToPct } from './geometry'
+import { THEME_CSS, winSceneFor } from './modeThemes'
+import { sound } from './audio'
 
 export const HEART = 'M12,21 C5,16 2,11 2,7.5 C2,4.5 4.5,2.5 7,2.5 C9,2.5 10.8,3.6 12,5.4 ' +
   'C13.2,3.6 15,2.5 17,2.5 C19.5,2.5 22,4.5 22,7.5 C22,11 19,16 12,21 Z'
@@ -14,6 +17,9 @@ export const HEART = 'M12,21 C5,16 2,11 2,7.5 C2,4.5 4.5,2.5 7,2.5 C9,2.5 10.8,3
 export function WalkOnCard({ pl }) {
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center gap-10 px-6">
+      {/* Entrance spotlight + strobe sweep behind the blister-pack card. */}
+      <div className="cin-walkon-spot" style={{ '--glow': pl.color }} />
+      <div className="cin-walkon-strobe" />
       <div className="cin-card" style={{ '--glow': pl.color }}>
         <div className="cin-card-tab" />
         <svg className="cin-card-heart" viewBox="0 0 24 24"><path d={HEART} fill={pl.color} /></svg>
@@ -46,13 +52,16 @@ export function WalkOnCard({ pl }) {
 // ── Match-side characters flanking the board ───────────────────────────────
 export function SideChar({ pl, pose, side, active, defeated }) {
   const finalPose = defeated ? 'defeated' : pose
+  // A defeated/eliminated player slumps and trudges off-frame toward the wings.
+  const slumpCls = defeated ? `cin-slump ${side === 'left' ? 'cin-slump-left' : 'cin-slump-right'}` : ''
+  const motionCls = finalPose === 'idle' ? 'cin-bob' : ''
   return (
-    <div className={`cin-sidechar ${side === 'left' ? 'left-[2%]' : 'right-[2%]'}`}
+    <div className={`cin-sidechar ${side === 'left' ? 'left-[2%]' : 'right-[2%]'} ${slumpCls}`}
       style={{
         opacity: active || finalPose !== 'idle' ? 1 : 0.55,
         filter: active ? `drop-shadow(0 0 26px ${pl.color}66)` : 'saturate(0.6)',
       }}>
-      <div className={finalPose === 'idle' ? 'cin-bob' : ''}>
+      <div className={defeated ? 'cin-slump-inner' : motionCls}>
         <Caricature variant={pl.variant} pose={finalPose} shirt={pl.color} flight={pl.color}
           className="w-full" style={side === 'right' ? { transform: 'scaleX(-1)' } : {}} />
       </div>
@@ -225,6 +234,27 @@ export function CricketScoreboard({ game, players, activeIdx, winnerIdx }) {
 export function KillerScoreboard({ game, players, activeIdx, winnerIdx }) {
   const gp = game.players || []
   const maxLives = game.lives ?? Math.max(1, ...gp.map((p) => p.state?.lives ?? 1))
+  // Track each player's previous `out` state in an effect so the elimination
+  // card-shatter animation only fires on the frame a player transitions out
+  // (not on every re-render while they stay out). `justOut` is a transient flag
+  // set true on the transition and cleared after the animation plays.
+  const prevOutRef = useRef(players.map((_, i) => !!gp[i]?.state?.out))
+  const [justOut, setJustOut] = useState(() => players.map(() => false))
+  const outSig = players.map((_, i) => (gp[i]?.state?.out ? '1' : '0')).join('')
+  useEffect(() => {
+    const prev = prevOutRef.current
+    const next = players.map((_, i) => {
+      const nowOut = !!gp[i]?.state?.out
+      return nowOut && prev[i] === false   // strict false→true transition only
+    })
+    prevOutRef.current = players.map((_, i) => !!gp[i]?.state?.out)
+    if (next.some(Boolean)) {
+      setJustOut(next)
+      const t = setTimeout(() => setJustOut(players.map(() => false)), 1500)
+      return () => clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outSig])
   return (
     <div className="mx-auto mb-4 w-full max-w-4xl flex flex-wrap justify-center gap-3 px-4 z-30">
       {players.map((pl, i) => {
@@ -234,10 +264,19 @@ export function KillerScoreboard({ game, players, activeIdx, winnerIdx }) {
         const live = s.lives ?? 0
         const hot = i === activeIdx || i === winnerIdx
         return (
-          <div key={i} className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 border backdrop-blur-md transition-all min-w-[112px] ${out ? 'opacity-40 grayscale' : ''}`}
+          <div key={i} className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 border backdrop-blur-md transition-all min-w-[112px] ${out ? 'opacity-40 grayscale' : ''} ${justOut[i] ? 'cin-shatter' : ''}`}
             style={hot && !out
               ? { background: `${pl.color}16`, borderColor: `${pl.color}88`, boxShadow: `0 0 24px ${pl.color}33` }
               : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.1)' }}>
+            {justOut[i] && (
+              <span className="cin-shatter-crack" aria-hidden="true">
+                <svg viewBox="0 0 112 90" preserveAspectRatio="none" className="w-full h-full">
+                  <path d="M0,42 L34,38 L48,52 L40,66 L66,58 L58,40 L82,46 L74,30 L112,38
+                           M48,52 L52,90 M58,40 L60,0 M40,66 L20,90 M74,30 L88,0"
+                    fill="none" stroke="#fca5a5" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+                </svg>
+              </span>
+            )}
             <div className="font-extrabold uppercase tracking-wide text-xs truncate max-w-[100px]"
               style={{ color: hot && !out ? pl.color : 'rgba(255,255,255,0.7)' }}>
               {pl.name} {i === winnerIdx && <Trophy className="inline w-3.5 h-3.5 text-amber-400 -mt-0.5" />}
@@ -264,6 +303,148 @@ export function KillerScoreboard({ game, players, activeIdx, winnerIdx }) {
         )
       })}
     </div>
+  )
+}
+
+// ── Winner card (trophy + caricature + stat grid) ───────────────────────────
+// Shared between the scripted demo finale and the live game-over moment. `stats`
+// is an array of [label, value] pairs (already formatted by the caller, so the
+// same card renders X01 averages or Killer survival numbers). `onReplay` and
+// `onExit` wire the two action buttons; either may be omitted to hide it.
+export function WinnerCard({ winner, crown = 'CHAMPION', accent, stats = [], onReplay, onExit, replayLabel = 'Winning dart', exitLabel = 'Exit show' }) {
+  if (!winner) return null
+  const col = accent || winner.color
+  return (
+    <div className="cin-winner">
+      <Trophy className="w-10 h-10 text-amber-400 mx-auto" />
+      <div className="text-[11px] tracking-[0.55em] text-amber-300/90 font-bold mt-2">{crown}</div>
+      <div className="w-36 h-36 mx-auto my-5 rounded-full overflow-hidden border-4"
+        style={{ borderColor: winner.color, background: winner.cardBg, boxShadow: `0 0 50px ${winner.color}55` }}>
+        <Caricature variant={winner.variant} pose="celebrate" framing="bust" shirt={winner.color} className="w-full h-full" />
+      </div>
+      <div className="text-3xl font-black uppercase tracking-wide">{winner.name}</div>
+      <div className="text-white/50 tracking-[0.3em] text-xs font-bold uppercase mt-1">“{winner.nick}”</div>
+
+      {stats.length > 0 && (
+        <div className="grid gap-2 mt-6" style={{ gridTemplateColumns: `repeat(${Math.min(stats.length, 4)}, minmax(0,1fr))` }}>
+          {stats.map(([k, v]) => (
+            <div key={k} className="rounded-xl bg-white/5 border border-white/10 py-3">
+              <div className="text-xl font-black tabular-nums" style={{ color: col }}>{v}</div>
+              <div className="text-[9px] tracking-[0.2em] text-white/40 font-bold mt-0.5">{k}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(onReplay || onExit) && (
+        <div className="flex gap-2 mt-6">
+          {onReplay && (
+            <button onClick={onReplay} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-sm font-bold tracking-wider uppercase transition-colors">
+              <RotateCcw className="w-4 h-4" /> {replayLabel}
+            </button>
+          )}
+          {onExit && (
+            <button onClick={onExit} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-bold tracking-wider uppercase transition-colors"
+              style={{ background: `${col}22`, borderColor: `${col}77`, color: col }}>
+              <X className="w-4 h-4" /> {exitLabel}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── WinScene: winning-dart slow-mo replay → winner card ──────────────────────
+// The full win-moment finale, self-contained and theme-parameterised. Plays a
+// zoom/slow-mo replay of the winning dart (if a board position is supplied),
+// then reveals the WinnerCard. Used by both CinematicDemo and the live
+// CinematicGame. It owns its own replay board overlay + zoom so it never has to
+// mutate the caller's match board state.
+//
+// Props:
+//   winner   – the broadcast `pl` shape for the champion
+//   pos      – [x_mm, y_mm] of the winning dart, or null/undefined to skip the
+//              replay and go straight to the card (graceful degrade)
+//   rot      – dart tilt for the replay (default 6)
+//   mode     – game mode key → pulls the per-mode winScene descriptor
+//   theme    – mode theme (accent, confetti) for headline + colours
+//   stats    – [label, value] pairs for the card grid
+//   muteReplaySound – when true, the replay whoosh/thud SFX are suppressed (the
+//                     live path leaves audio to the commentary agent)
+//   onReplay – called when the card's replay button re-runs the scene
+//   onExit   – card exit action
+export function WinScene({ winner, pos, rot = 6, mode = 'X01', theme, stats = [],
+  muteReplaySound = false, onExit }) {
+  const desc = winSceneFor(mode)
+  const accent = theme?.accent || winner?.color || '#fbbf24'
+  const canReplay = !!(desc.replay && pos && pos.length === 2)
+
+  // phase: 'replay' (zoom + slow-mo) → 'card'. With no position we open on 'card'.
+  const [phase, setPhase] = useState(canReplay ? 'replay' : 'card')
+  const [zoom, setZoom] = useState(null)
+  const [showDart, setShowDart] = useState(false)
+  const shakeRef = useRef(null)
+  const timersRef = useRef([])
+
+  const shake = () => {
+    shakeRef.current?.animate?.([
+      { transform: 'translate(0,0)' }, { transform: 'translate(4px,-3px)' },
+      { transform: 'translate(-3px,2px)' }, { transform: 'translate(2px,-1.5px)' },
+      { transform: 'translate(0,0)' },
+    ], { duration: 380, easing: 'ease-out' })
+  }
+
+  const runReplay = () => {
+    timersRef.current.forEach(clearTimeout)
+    timersRef.current = []
+    if (!canReplay) { setPhase('card'); return }
+    const T = (fn, ms) => timersRef.current.push(setTimeout(fn, ms))
+    setPhase('replay')
+    setShowDart(false)
+    const [ox, oy] = mmToPct(pos)
+    setZoom({ transform: 'scale(2.05)', transformOrigin: `${ox}% ${oy}%` })
+    T(() => { if (!muteReplaySound) sound.whoosh?.(); setShowDart(true) }, 950)
+    T(() => { if (!muteReplaySound) sound.thud?.(); shake() }, 1850)
+    T(() => setZoom(null), 3150)
+    T(() => setPhase('card'), 3950)
+  }
+
+  // Kick off the replay once on mount (or skip straight to the card). Deferred
+  // (setTimeout 0) so the initial setState lands outside the effect body.
+  useEffect(() => {
+    if (canReplay) {
+      const t = setTimeout(runReplay, 0)
+      timersRef.current.push(t)
+    }
+    return () => timersRef.current.forEach(clearTimeout)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const replayDart = showDart && pos
+    ? [{ id: 'win', x: pos[0], y: pos[1], color: winner?.color, rot, slow: true, win: true }]
+    : []
+
+  return (
+    <>
+      {phase === 'replay' && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="cin-zoom h-full max-h-[58vh] aspect-square" style={zoom || {}}>
+            <div ref={shakeRef} className="w-full h-full">
+              <BroadcastBoard darts={replayDart} />
+            </div>
+          </div>
+          <div className="cin-replay-badge">● REPLAY</div>
+          <div className="cin-winscene-headline">{desc.headline}</div>
+        </div>
+      )}
+      {phase === 'card' && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm px-4">
+          <WinnerCard winner={winner} crown={desc.crown} accent={accent} stats={stats}
+            onReplay={canReplay ? runReplay : undefined} onExit={onExit} />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -302,16 +483,22 @@ export function Confetti({ colors: palette } = {}) {
 
 // ── Full broadcast stylesheet (shared by demo + live cinematic game) ─────────
 export const CSS = `
+/* Arena backdrop is venue-skinnable: a venue sets --cin-bg-1/2/3 (gradient
+   stops) and --cin-spot-a/b (the two roving spotlight tints) on the cinematic
+   root. Fallbacks keep the default deep-blue stage if no venue is applied. */
 .cin-bg { position:absolute; inset:0; background:
-  radial-gradient(120% 90% at 50% -10%, #222b4d 0%, #0a0d18 55%, #04050a 100%); }
+  radial-gradient(120% 90% at 50% -10%,
+    var(--cin-bg-1, #222b4d) 0%,
+    var(--cin-bg-2, #0a0d18) 55%,
+    var(--cin-bg-3, #04050a) 100%); }
 .cin-spot { position:absolute; width:160vmax; height:160vmax; left:50%; top:-80vmax;
   margin-left:-80vmax; mix-blend-mode:screen; pointer-events:none; }
 .cin-spot-a { background: conic-gradient(from 175deg at 50% 50%,
-  transparent 0deg, rgba(125,170,255,0.10) 4deg, transparent 9deg,
-  transparent 22deg, rgba(255,130,180,0.08) 26deg, transparent 31deg);
+  transparent 0deg, var(--cin-spot-a, rgba(125,170,255,0.10)) 4deg, transparent 9deg,
+  transparent 22deg, var(--cin-spot-b, rgba(255,130,180,0.08)) 26deg, transparent 31deg);
   animation: cin-sweep 11s ease-in-out infinite alternate; }
 .cin-spot-b { background: conic-gradient(from 168deg at 50% 50%,
-  transparent 0deg, rgba(160,255,220,0.06) 5deg, transparent 11deg);
+  transparent 0deg, var(--cin-spot-c, rgba(160,255,220,0.06)) 5deg, transparent 11deg);
   animation: cin-sweep 13s ease-in-out -4s infinite alternate-reverse; }
 @keyframes cin-sweep { from { transform: rotate(-16deg); } to { transform: rotate(16deg); } }
 
@@ -345,6 +532,20 @@ export const CSS = `
   100% { opacity:1; transform:perspective(900px) rotateY(-4deg); } }
 @keyframes cin-card-float { from { transform:perspective(900px) rotateY(-4deg) translateY(0); }
   to { transform:perspective(900px) rotateY(6deg) translateY(-8px); } }
+.cin-walkon-spot { position:absolute; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(60% 80% at 50% 120%, var(--glow, #fff) 0%, transparent 60%),
+    conic-gradient(from 270deg at 50% 110%, transparent 64deg,
+      rgba(255,255,255,.16) 84deg, transparent 96deg,
+      transparent 264deg, rgba(255,255,255,.16) 276deg, transparent 288deg);
+  opacity:.35; mix-blend-mode:screen;
+  animation: cin-walkon-spot-in .8s ease-out both, cin-walkon-spot-sway 4.5s 0.8s ease-in-out infinite alternate; }
+@keyframes cin-walkon-spot-in { from { opacity:0; } to { opacity:.35; } }
+@keyframes cin-walkon-spot-sway { from { transform:rotate(-5deg); } to { transform:rotate(5deg); } }
+.cin-walkon-strobe { position:absolute; inset:0; pointer-events:none; z-index:1;
+  background:linear-gradient(105deg, transparent 40%, rgba(255,255,255,.22) 50%, transparent 60%);
+  mix-blend-mode:screen; animation: cin-walkon-strobe 2.6s ease-in-out infinite; }
+@keyframes cin-walkon-strobe { 0% { transform:translateX(-120%); } 55%,100% { transform:translateX(120%); } }
 .cin-card-tab { width:64px; height:16px; background:#d9cdb0; border-radius:0 0 12px 12px;
   margin:0 auto 6px; box-shadow:inset 0 -2px 4px rgba(0,0,0,.15); }
 .cin-card-tab::after { content:''; display:block; width:26px; height:7px; border-radius:999px;
@@ -372,6 +573,10 @@ export const CSS = `
 .cin-replay-badge { position:absolute; top:16%; left:50%; transform:translateX(-50%);
   padding:7px 18px; border-radius:999px; background:rgba(220,38,38,.85); color:#fff;
   font-weight:800; font-size:12px; letter-spacing:.3em; animation: cin-blink 1s infinite; z-index:20; }
+.cin-winscene-headline { position:absolute; bottom:9%; left:50%; transform:translateX(-50%);
+  font-weight:900; font-size:clamp(20px, 4vw, 48px); letter-spacing:.12em; text-align:center;
+  white-space:nowrap; color:#fff; text-shadow:0 6px 30px rgba(0,0,0,.7);
+  animation: cin-up .5s .3s both; z-index:21; }
 .cin-banner { position:absolute; bottom:5%; left:50%; transform:translateX(-50%);
   padding:10px 28px; border-radius:999px; background:rgba(8,10,18,.82); backdrop-filter:blur(8px);
   border:1px solid rgba(255,255,255,.18); font-weight:800; letter-spacing:.28em; font-size:13px;
@@ -425,4 +630,70 @@ export const CSS = `
   background:linear-gradient(180deg, #12151f, #0a0c12); border:1px solid rgba(255,255,255,.12);
   box-shadow: 0 40px 120px rgba(0,0,0,.7), 0 0 90px rgba(245,158,11,.12);
   animation: cin-pop-in .6s cubic-bezier(.2,1.4,.3,1) both; }
+
+/* ── Losing / elimination: SideChar slump + trudge off-frame ──────────────── */
+/* The defeated pose (sagging shoulders) is the static beat; on top we settle
+   the whole figure down, dim it, and shuffle it toward the wings. The inner
+   wrapper adds a slow body-sag bob so it never looks frozen. */
+.cin-slump { animation: cin-slump-settle 1.1s ease-out both; }
+.cin-slump-left  { animation: cin-slump-settle 1.1s ease-out both, cin-trudge-left  6s 1.1s ease-in-out infinite; }
+.cin-slump-right { animation: cin-slump-settle 1.1s ease-out both, cin-trudge-right 6s 1.1s ease-in-out infinite; }
+.cin-slump-inner { animation: cin-slump-sag 3.4s 1.1s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes cin-slump-settle {
+  0%   { transform: translateY(0) scale(1); }
+  100% { transform: translateY(14px) scale(.94); opacity:.85; } }
+@keyframes cin-slump-sag {
+  0%,100% { transform: translateY(0) rotate(0); }
+  50%     { transform: translateY(5px) rotate(-1.5deg); } }
+/* Slow shuffle off toward each wing, then a tiny dejected bob back — never fully
+   leaves so the panel/label stay readable. */
+@keyframes cin-trudge-left {
+  0%   { transform: translateY(14px) scale(.94) translateX(0); }
+  60%  { transform: translateY(14px) scale(.94) translateX(-26%); }
+  100% { transform: translateY(14px) scale(.94) translateX(-18%); } }
+@keyframes cin-trudge-right {
+  0%   { transform: translateY(14px) scale(.94) translateX(0); }
+  60%  { transform: translateY(14px) scale(.94) translateX(26%); }
+  100% { transform: translateY(14px) scale(.94) translateX(18%); } }
+
+/* ── Killer elimination: card shatter / crack-and-grey ────────────────────── */
+/* Fired once on the false-to-true out transition of a Killer row. A sharp shake
+   + flash, the row greys out (its base classes already drop opacity/grayscale),
+   and a crack overlay draws across it. */
+.cin-shatter { animation: cin-shatter-shake .6s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes cin-shatter-shake {
+  0%   { transform: translateX(0) rotate(0); box-shadow: 0 0 0 0 rgba(239,68,68,.0); }
+  10%  { transform: translateX(-6px) rotate(-2deg); box-shadow: 0 0 30px 4px rgba(239,68,68,.55); }
+  25%  { transform: translateX(7px) rotate(2.5deg); }
+  40%  { transform: translateX(-5px) rotate(-1.5deg); }
+  55%  { transform: translateX(4px) rotate(1deg); }
+  70%  { transform: translateX(-2px) rotate(-.5deg); }
+  100% { transform: translateX(0) rotate(0); box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+.cin-shatter-crack { position:absolute; inset:0; pointer-events:none; z-index:2;
+  border-radius:16px; overflow:hidden; opacity:0;
+  animation: cin-crack-draw 1.4s ease-out forwards; }
+.cin-shatter-crack path { stroke-dasharray: 360; stroke-dashoffset: 360;
+  animation: cin-crack-stroke 1s .15s ease-out forwards; }
+@keyframes cin-crack-draw { 0%{ opacity:0; } 12%{ opacity:1; } 70%{ opacity:1; } 100%{ opacity:.45; } }
+@keyframes cin-crack-stroke { to { stroke-dashoffset: 0; } }
+
+/* ── Crowd silhouettes ────────────────────────────────────────────────────── */
+/* A darkened band of heads behind the stage. A constant gentle sway idles; the
+   .cin-crowd-react modifier bounces/roars on big moments. */
+.cin-crowd { position:absolute; left:0; right:0; bottom:0; height:clamp(64px, 14vh, 150px);
+  pointer-events:none; z-index:2; overflow:hidden;
+  -webkit-mask-image: linear-gradient(to top, #000 60%, transparent);
+  mask-image: linear-gradient(to top, #000 60%, transparent); }
+.cin-crowd svg { width:100%; height:100%; display:block; }
+.cin-crowd-sway { transform-origin: 50% 100%; animation: cin-crowd-sway 5.5s ease-in-out infinite; }
+@keyframes cin-crowd-sway {
+  0%,100% { transform: translateX(0) skewX(0deg); }
+  50%     { transform: translateX(1.4%) skewX(-.6deg); } }
+.cin-crowd-react .cin-crowd-sway { animation: cin-crowd-roar 1.1s ease-out; }
+@keyframes cin-crowd-roar {
+  0%   { transform: translateY(0) scaleY(1); }
+  18%  { transform: translateY(-9px) scaleY(1.06); }
+  40%  { transform: translateY(-3px) scaleY(1.02); }
+  62%  { transform: translateY(-6px) scaleY(1.04); }
+  100% { transform: translateY(0) scaleY(1); } }
 ` + THEME_CSS

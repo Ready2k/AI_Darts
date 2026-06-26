@@ -6,10 +6,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Volume2, VolumeX, Star, Move, Pause, Play } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
-import { CSS, WalkOnCard, RulesCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti } from './broadcastParts'
-import { themeFor } from './modeThemes'
+import { CSS, WalkOnCard, RulesCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti, WinScene } from './broadcastParts'
+import { themeFor, venueFor } from './modeThemes'
+import CrowdRow from '../art/CrowdRow'
 import KillerSpin from './KillerSpin'
-import { sound } from './audio'
+import { sound, crowd } from './audio'
+import { pickLine } from './commentary'
 import { getAvatar } from '../config/avatars'
 import { ThrowState } from '../config/timing'
 
@@ -109,6 +111,50 @@ function rulesFor(game) {
   }
 }
 
+// Per-mode winner-card stat grid, built from the live player dict. Only uses
+// fields the backend already exposes (avg, darts, legs, sets, score, state) so
+// it degrades gracefully — anything missing shows as a dash. Returns up to 4
+// [label, value] pairs.
+function winStats(game, p) {
+  if (!p) return []
+  const mode = game?.mode ?? 'X01'
+  const dash = (v) => (v == null || v === '' ? '—' : v)
+  switch (mode) {
+    case 'Cricket':
+      return [
+        ['POINTS', dash(p.score)],
+        ['LEGS', dash(p.legs)],
+        ['DARTS', dash(p.darts)],
+      ]
+    case 'Killer': {
+      const lives = p.state?.lives
+      return [
+        ['LIVES LEFT', dash(lives)],
+        ['NUMBER', dash(p.state?.number)],
+        ['DARTS', dash(p.darts)],
+      ]
+    }
+    case 'Around the Clock':
+      return [
+        ['DARTS', dash(p.darts)],
+        ['LEGS', dash(p.legs)],
+      ]
+    case 'Shanghai':
+    case 'Count Up':
+      return [
+        ['SCORE', dash(p.score)],
+        ['DARTS', dash(p.darts)],
+      ]
+    default: // X01
+      return [
+        ['3-DART AVG', dash(p.avg)],
+        ['LEGS', dash(p.legs)],
+        ['SETS', dash(p.sets)],
+        ['DARTS', dash(p.darts)],
+      ]
+  }
+}
+
 // Map a live game player + chosen avatar into the broadcast `pl` shape.
 function toCinPlayer(p, idx, avatarMap) {
   const av = getAvatar(avatarMap[p.name])
@@ -118,6 +164,7 @@ function toCinPlayer(p, idx, avatarMap) {
     variant: av.variant,
     color: COLORS[idx] || COLORS[0],
     cardBg: av.bg,
+    theme: av.theme,
     accessories: DEFAULT_ACCESSORIES,
     bio: p.darts > 0 ? `Average ${p.avg} · ${p.legs} legs won` : 'Stepping up to the oche',
   }
@@ -219,8 +266,13 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const [phase, setPhase] = useState('match') // 'walkon' | 'match'
   const [walkonIdx, setWalkonIdx] = useState(0)
   const [bigCall, setBigCall] = useState(null)
+  const [crowdReact, setCrowdReact] = useState(false)  // visual crowd roar bounce
+  const [winScene, setWinScene] = useState(null)       // { winnerIdx, pos } once per game-over
+
+  const winFiredRef = useRef(null)   // game-over signature already shown (once-only guard)
 
   const seenSigRef = useRef(null)
+  const crowdReactTimer = useRef(null)
   const walkTimers = useRef([])
   const prevSeqRef = useRef(game?.dart_seq ?? 0)
   const bigCallTimer = useRef(null)
@@ -228,6 +280,9 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const prevCricketRef = useRef(null)
   const prevTurnRef = useRef(null)
   const prevProgressRef = useRef(null)
+  const prevCheckoutRef = useRef(false)
+  const wasOnCheckoutRef = useRef(false)   // owned by the big-call effect (miss detection)
+  const prevLeaderRef = useRef(null)
 
   // ── Draggable camera inset ────────────────────────────────────────────────
   // Position is the inset's top-left within the board stage, in px. null = the
@@ -311,6 +366,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       const rules = rulesFor(game)
       const announce = (pl) => {
         sound.cheer(false)
+        sound.walkOnTheme(pl.theme)   // persona entrance sting
         sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04 })
       }
       sound.stop()
@@ -333,6 +389,34 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   }, [sig, isFresh, game, players.length, cinPlayers])
 
   useEffect(() => () => walkTimers.current.forEach(clearTimeout), [])
+
+  // ── Crowd ambience bed ────────────────────────────────────────────────────
+  // Start the looping crowd murmur once the match is live; tear it down when we
+  // leave 'match' (rules/spin/walk-on) and on unmount. roar()/hush() are fired
+  // from the big-call and checkout effects below.
+  useEffect(() => {
+    if (phase === 'match') {
+      crowd.start()
+      crowd.setIntensity(0.45)
+    } else {
+      crowd.stop()
+    }
+    return () => crowd.stop()
+  }, [phase])
+
+  // ── Checkout hush ─────────────────────────────────────────────────────────
+  // When a player is on a finish (game.checkout present), drop the crowd to a
+  // tense near-silence; restore the resting intensity once the checkout clears.
+  useEffect(() => {
+    if (phase !== 'match') { prevCheckoutRef.current = false; return }
+    const onCheckout = !!game?.checkout && !game?.over
+    if (onCheckout && !prevCheckoutRef.current) {
+      crowd.hush()
+    } else if (!onCheckout && prevCheckoutRef.current) {
+      crowd.setIntensity(0.45)   // restore murmur after the attempt
+    }
+    prevCheckoutRef.current = onCheckout
+  }, [game, phase])
 
   const skipIntro = () => {
     walkTimers.current.forEach(clearTimeout)
@@ -368,6 +452,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   // ── Big-call overlay on visit completion (180 / game shot) ────────────────
   useEffect(() => {
     if (!game) return
+    // Snapshot whether a checkout was on the board *before* this update, then
+    // record the current state for next time. Done before the early returns so
+    // it's tracked on every game change (independent of the hush effect's ref).
+    const wasOnCheckout = wasOnCheckoutRef.current
+    wasOnCheckoutRef.current = !!game.checkout && !game.over
+
     const seq = game.dart_seq ?? 0
     const prev = prevSeqRef.current
     prevSeqRef.current = seq
@@ -377,28 +467,51 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     const visitOver = (game.turn?.length ?? 0) === 0 && disp.length > 0
     if (!visitOver) return
 
+    // Checkout miss: the player was on a finish before this visit completed but
+    // the visit ended without winning. Fire the disappointed caller.
+    if (wasOnCheckout && !game.over) {
+      sound.say(pickLine('checkoutMiss'), { rate: 0.97, pitch: 0.82 })
+    }
+
     const total = disp.reduce((s, d) => s + (d.points || 0), 0)
     const msg = game.message || ''
     const mode = game.mode ?? 'X01'
     const x01 = mode === 'X01'
     const th = themeFor(mode)
     let call = null
-    if (game.over) call = { ...th.win }
+    let line = null   // optional spoken commentary for this big moment
+    if (game.over) {
+      call = { ...th.win }
+      line = pickLine('win', { name: game.winner || 'The winner' })
+    }
     else if (/wins the set/i.test(msg)) call = { text: 'GAME SHOT', sub: 'AND THE SET' }
     else if (/wins the leg/i.test(msg)) call = { text: 'GAME SHOT', sub: 'THE LEG' }
     else if (/SHANGHAI/i.test(msg)) call = { text: 'SHANGHAI', sub: 'INSTANT WIN' }
     // Killer: announce an elimination (not a win) with the knocked-out player.
     else if (mode === 'Killer' && /KNOCKS OUT|is OUT/i.test(msg)) {
       const victim = (msg.match(/KNOCKS OUT (.+?) \(/) || msg.match(/(\w[\w ]*) hit their OWN/) || [])[1]
-      call = { text: 'ELIMINATED', sub: victim ? victim.trim() : 'ONE DOWN', elim: true }
+      const v = victim ? victim.trim() : 'ONE DOWN'
+      call = { text: 'ELIMINATED', sub: v, elim: true }
+      line = pickLine('eliminated', { victim: victim ? victim.trim() : 'A player' })
     }
     // The 180 / big-score calls only make sense in X01, where the visit total
     // is the score. In Cricket/ATC the dart face value isn't the score, so a
     // "60 BIG SCORE" on three closing trebles would be nonsense.
-    else if (x01 && total === 180) call = { text: '180', sub: 'MAXIMUM' }
-    else if (x01 && total >= 100) call = { text: String(total), sub: 'BIG SCORE' }
+    else if (x01 && total === 180) { call = { text: '180', sub: 'MAXIMUM' }; line = pickLine('visitTotal', { total }) }
+    else if (x01 && total >= 100) { call = { text: String(total), sub: 'BIG SCORE' }; line = pickLine('visitTotal', { total }) }
 
     if (call) {
+      crowd.roar()   // crowd swells on every big moment (audio)
+      // Visual partner: bounce the crowd silhouettes. Re-arm so back-to-back
+      // big calls each retrigger the bounce. Deferred (setTimeout 0) to avoid a
+      // synchronous setState inside the effect body.
+      clearTimeout(crowdReactTimer.current)
+      setTimeout(() => {
+        setCrowdReact(false)
+        requestAnimationFrame(() => setCrowdReact(true))
+      }, 0)
+      crowdReactTimer.current = setTimeout(() => setCrowdReact(false), 1200)
+      if (line) sound.say(line, { rate: 0.96 })
       clearTimeout(bigCallTimer.current)
       // Deferred to avoid synchronous setState inside the effect body.
       setTimeout(() => setBigCall(call), 0)
@@ -406,7 +519,49 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     }
   }, [game])
 
-  useEffect(() => () => clearTimeout(bigCallTimer.current), [])
+  useEffect(() => () => { clearTimeout(bigCallTimer.current); clearTimeout(crowdReactTimer.current) }, [])
+
+  // ── Win-moment finale (visual only) ───────────────────────────────────────
+  // On game-over, after the themed big-call has had its moment, raise the shared
+  // WinScene: a slow-mo replay of the winning dart (board position from
+  // game.last_dart_pos, falling back to the last display_turn dart with a pos),
+  // then the winner card with real stats. Guarded so it fires exactly once per
+  // game-over — keyed on the winner name so a fresh game (winner cleared) re-arms
+  // it. Audio is owned by the commentary agent's `win` line, so this is visuals
+  // only (muteReplaySound).
+  const winTimerRef = useRef(null)
+  useEffect(() => {
+    if (!game || !game.over || game.winner == null) {
+      // New / ongoing game → clear the guard and any lingering scene.
+      if (winFiredRef.current && (!game?.over || game?.winner == null)) {
+        winFiredRef.current = null
+        setWinScene(null)
+      }
+      return
+    }
+    const sigOver = `${game.winner}#${game.dart_seq ?? 0}`
+    if (winFiredRef.current === sigOver) return
+    winFiredRef.current = sigOver
+
+    const wIdx = players.findIndex((p) => p.name === game.winner)
+    if (wIdx < 0) return
+    // Winning-dart board position: prefer the explicit last_dart_pos; else the
+    // last dart in the just-finished visit that carries a board coord.
+    let pos = game.last_dart_pos || null
+    if (!pos) {
+      const disp = game.display_turn || []
+      for (let i = disp.length - 1; i >= 0; i--) {
+        if (disp[i]?.pos) { pos = disp[i].pos; break }
+      }
+    }
+    // Defer until the big-call/confetti beat has played (it lives ~2.2s).
+    clearTimeout(winTimerRef.current)
+    winTimerRef.current = setTimeout(() => {
+      setWinScene({ winnerIdx: wIdx, pos: pos || null })
+    }, 2400)
+  }, [game, players])
+
+  useEffect(() => () => clearTimeout(winTimerRef.current), [])
 
   // ── Killer sound design: kerching (arming hit), lock-and-load (armed), and
   // ouch (a life knocked off). Diff the per-player Killer state each update. ──
@@ -421,7 +576,11 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     if (prev && prev.length === cur.length) {
       cur.forEach((c, i) => {
         const pr = prev[i]
-        if (!pr.killer && c.killer) sound.lockLoad()        // just armed
+        if (!pr.killer && c.killer) {
+          sound.lockLoad()        // rack SFX
+          const name = game.players?.[i]?.name || 'Player'
+          sound.say(pickLine('killerArm', { name }), { rate: 1.0, pitch: 0.85 })
+        }
         else if (!c.killer && c.arm > pr.arm) sound.kerching() // arming hit
         if (c.lives < pr.lives) sound.ouch()                // life taken
       })
@@ -449,12 +608,8 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
             const scoreable = cur.some((m, j) => j !== i && (m[k] ?? 0) < 3)
             const name = players[i]?.name || 'Player'
             sound.kerching()   // success cue: a number just closed
-            sound.say(
-              scoreable
-                ? `${name} closes ${label}. Open for points.`
-                : `${name} closes ${label}. Dead number.`,
-              { rate: 0.95 },
-            )
+            const head = pickLine('cricketClose', { name, label })
+            sound.say(`${head} ${scoreable ? 'Open for points.' : 'Dead number.'}`, { rate: 0.95 })
           }
         })
       })
@@ -476,8 +631,16 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       // New visit → announce the intro and reset the success baseline.
       prevTurnRef.current = cur
       prevProgressRef.current = activeProgress(game, cur)
-      const phrase = turnIntro(game, cur)
-      if (phrase) sound.say(phrase, { rate: 0.96 })
+      // X01: vary the intro via the commentary bank (one variant is still the
+      // classic "{name} needs N"). Other modes keep their mode-specific phrase.
+      const mode = game.mode ?? 'X01'
+      if (mode === 'X01') {
+        const p = game.players?.[cur]
+        if (p) sound.say(pickLine('turnIntro', { name: p.name || 'Player', need: p.score }), { rate: 0.96 })
+      } else {
+        const phrase = turnIntro(game, cur)
+        if (phrase) sound.say(phrase, { rate: 0.96 })
+      }
       return
     }
     const prog = activeProgress(game, cur)
@@ -485,6 +648,26 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       sound.kerching()   // they hit what they needed
     }
     prevProgressRef.current = prog
+  }, [game, phase])
+
+  // ── Lead-change call (X01) ────────────────────────────────────────────────
+  // Track who's nearest a finish (lowest score). When the leader changes mid-
+  // match, the co-commentator (lower pitch) calls it. Only fires once a few
+  // darts are in so the start-of-leg tie doesn't trigger it.
+  useEffect(() => {
+    if (phase !== 'match' || !game || game.over || (game.mode ?? 'X01') !== 'X01') {
+      prevLeaderRef.current = null
+      return
+    }
+    const ps = game.players || []
+    if (ps.length < 2 || (game.dart_seq ?? 0) < 3) return
+    let leader = null, best = Infinity
+    ps.forEach((p) => { if (p.score < best) { best = p.score; leader = p.name } })
+    const prev = prevLeaderRef.current
+    if (prev != null && leader != null && leader !== prev) {
+      sound.say(pickLine('leadChange', { leader }), { rate: 0.95, pitch: 0.78 })
+    }
+    prevLeaderRef.current = leader
   }, [game, phase])
 
   const paused = !!game?.paused
@@ -499,6 +682,9 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   if (!game || players.length < 1) return null
   const isX01 = (game.mode ?? 'X01') === 'X01'
   const theme = themeFor(game.mode ?? 'X01')
+  // Venue re-skins the arena backdrop (default per mode; a picker could pass a
+  // key later). Its CSS vars are spread onto the cinematic root below.
+  const venue = venueFor(game.mode ?? 'X01')
 
   const activeColor = COLORS[Math.max(0, activeIdx)] || COLORS[0]
   const darts = (boardDarts || [])
@@ -553,11 +739,21 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     : { left: Math.max(0, activeIdx), right: null }
 
   return (
-    <div ref={stageRef} className="relative w-full h-full overflow-hidden rounded-2xl text-white">
+    <div ref={stageRef}
+      className={`relative w-full h-full overflow-hidden rounded-2xl text-white ${crowdReact ? 'cin-crowd-react' : ''}`}
+      style={venue.vars}>
       <style>{CSS}</style>
       <div className="cin-bg" />
       <div className="cin-spot cin-spot-a" />
       <div className="cin-spot cin-spot-b" />
+      {/* Crowd silhouettes: a darkened band low on the stage, behind the board
+          and the SideChar panels (z below them). Idle sway always; bounces when
+          the root carries .cin-crowd-react on a big moment. */}
+      <div className="cin-crowd">
+        <div className="cin-crowd-sway w-full h-full">
+          <CrowdRow accent={theme.accent} />
+        </div>
+      </div>
 
       {/* Top bar */}
       <div className="absolute top-0 inset-x-0 flex items-center justify-between px-6 py-4 z-50">
@@ -708,6 +904,22 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
             </>
           )}
         </div>
+      )}
+
+      {/* Win-moment finale: slow-mo winning-dart replay → winner card with real
+          live stats. Confetti keeps falling behind it. Mounted once per
+          game-over (guarded by winFiredRef). */}
+      {winScene && cinPlayers[winScene.winnerIdx] && (
+        <WinScene
+          winner={cinPlayers[winScene.winnerIdx]}
+          pos={winScene.pos}
+          rot={ROTS[((game.display_turn?.length ?? 1) - 1) % ROTS.length] ?? 6}
+          mode={game.mode ?? 'X01'}
+          theme={theme}
+          muteReplaySound
+          stats={winStats(game, players[winScene.winnerIdx])}
+          onExit={onExit}
+        />
       )}
 
       {/* Live camera feed — mounted in both phases so it begins warming up
