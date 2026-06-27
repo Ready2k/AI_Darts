@@ -1,7 +1,9 @@
 import asyncio
+import json
 import math
 import random
 import time
+from pathlib import Path
 
 import detect
 import dartboard
@@ -15,6 +17,47 @@ LEVEL_SPREAD = {
     "Semi Pro": 15.0,  # Medium spread: hits 20s consistently, sometimes trebles
     "Pro": 6.0,        # Tight spread: hits trebles frequently but not flawlessly
 }
+
+# ── Recurring nemesis: "The Machine" ──────────────────────────────────────────
+# A named recurring AI rival whose difficulty ramps the more it has beaten the
+# human. The win count persists to nemesis.json (read lazily, written on wins).
+# Selectable as an opponent in setup (its name is the avatar key on the frontend).
+NEMESIS_NAME = "The Machine"
+NEMESIS_FILE = Path("nemesis.json")
+_LEVEL_LADDER = ["Beginner", "Semi Pro", "Pro"]
+
+
+def is_nemesis(name):
+    return (name or "").strip().lower() == NEMESIS_NAME.lower()
+
+
+def nemesis_state():
+    """Return {"wins": N} read from nemesis.json (robust to missing/corrupt)."""
+    try:
+        data = json.loads(NEMESIS_FILE.read_text())
+        return {"wins": int(data.get("wins", 0))}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"wins": 0}
+
+
+def nemesis_effective_level(base_level=None):
+    """The nemesis's effective AI level, nudged up the ladder by its win count:
+    every 2 wins over the human bumps it one rung (capped at 'Pro'). Falls back
+    to the configured base level's rung if higher."""
+    wins = nemesis_state()["wins"]
+    base_idx = _LEVEL_LADDER.index(base_level) if base_level in _LEVEL_LADDER else 0
+    idx = min(len(_LEVEL_LADDER) - 1, max(base_idx, wins // 2))
+    return _LEVEL_LADDER[idx]
+
+
+def nemesis_record_win():
+    """Increment and persist the nemesis win counter. Returns the new total."""
+    wins = nemesis_state()["wins"] + 1
+    try:
+        NEMESIS_FILE.write_text(json.dumps({"wins": wins}))
+    except OSError as e:
+        print(f"[AI] Could not persist nemesis win: {e}")
+    return wins
 
 def get_target_coord(label):
     """
@@ -203,6 +246,9 @@ async def ai_loop():
                     continue
 
                 level = game.player.ai_level
+                # The nemesis ramps its effective difficulty by its win record.
+                if is_nemesis(game.player.name):
+                    level = nemesis_effective_level(level)
                 need_step_up = not stepped_up
 
             # Once per visit, after the board is clear, pause ~2s to mimic the

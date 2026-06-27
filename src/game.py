@@ -26,12 +26,23 @@ class Player:
         self.total_darts = 0
         self.is_ai = is_ai
         self.ai_level = ai_level
+        # Richer stats (X01)
+        self.maxima = 0                   # count of 180 visits
+        self.checkout_attempts = 0        # darts thrown at a double-out finish
+        self.checkout_hits = 0            # successful finishes
+        self.leg_darts = 0                # darts thrown in the CURRENT leg
 
     @property
     def three_dart_avg(self):
         if self.total_darts == 0:
             return 0.0
         return self.total_points / self.total_darts * 3
+
+    @property
+    def checkout_pct(self):
+        if self.checkout_attempts == 0:
+            return 0.0
+        return self.checkout_hits / self.checkout_attempts * 100
 
     def to_dict(self):
         return {
@@ -44,6 +55,11 @@ class Player:
             "darts": self.total_darts,
             "is_ai": self.is_ai,
             "ai_level": self.ai_level,
+            "maxima": self.maxima,
+            "checkout_pct": round(self.checkout_pct, 1),
+            "checkout_attempts": self.checkout_attempts,
+            "checkout_hits": self.checkout_hits,
+            "leg_darts": self.leg_darts,
         }
 
 
@@ -78,6 +94,7 @@ class X01Game:
         self.turn_start_score = start_score
         self.winner = None            # Player who won the match, or None
         self.message = ""             # last human-readable event
+        self.last_finish = None       # feat data for the most recent leg won
 
         # Monotonic counter incremented on every dart — lets the frontend
         # reliably detect the 3rd dart of a visit even though self.turn resets
@@ -150,6 +167,13 @@ class X01Game:
                 return self._finish_dart(hit, position, bust=False, scored=False,
                                          message=f"{hit.label} (needs {need} to start)",
                                          confidence=confidence)
+
+        # Checkout-attempt tracking (double-out only): a dart thrown while the
+        # remaining score is a single-dart finish (an even number ≤ 40, 50, or
+        # bull-out) is counted as an attempt at the double. The matching hit on
+        # the finishing path records a hit. Mirrors PDC "doubles attempted".
+        if self.double_out and self._is_checkout_attempt(p.score):
+            p.checkout_attempts += 1
 
         new_remaining = p.score - hit.points
         bust = self._is_bust(new_remaining, hit)
@@ -249,6 +273,13 @@ class X01Game:
             return is_master(hit)
         return is_double(hit)   # "double"
 
+    def _is_checkout_attempt(self, score):
+        """True if `score` is a one-dart finish under double-out (a dart thrown
+        now is an attempt at the checkout double)."""
+        if score == 50:
+            return True
+        return 2 <= score <= 40 and score % 2 == 0
+
     def _is_bust(self, new_remaining, hit):
         if self.double_out:
             if new_remaining < 0 or new_remaining == 1:
@@ -262,6 +293,7 @@ class X01Game:
 
     def _finish_dart(self, hit, position, bust, scored, message, confidence=None):
         self.dart_seq += 1
+        self.player.leg_darts += 1
         self.last_dart_label = hit.label
         self.last_dart_pos = list(position) if position else None
         self.turn.append(hit)
@@ -278,6 +310,9 @@ class X01Game:
         if bust:
             p.score = self.turn_start_score      # revert this visit
         scored = self.turn_start_score - p.score
+        # A maximum: a full 3-dart visit worth 180 (busts revert, so never count).
+        if not bust and len(self.turn) == 3 and scored == 180:
+            p.maxima += 1
         p.total_points += scored
         p.total_darts  += len(self.turn)
         self._advance_player()
@@ -296,6 +331,18 @@ class X01Game:
         p = self.player
         p.total_points += self.turn_start_score      # whole leg's worth scored
         p.total_darts  += len(self.turn) + 1
+        p.leg_darts += 1                             # the winning dart
+        if self.double_out:
+            p.checkout_hits += 1                    # this dart finished the leg
+        # Snapshot the finishing leg's feat data BEFORE _start_new_leg resets
+        # leg_darts. checkout = the score the player started the winning visit
+        # on (so a 170 finish reads 170). Drives the feat stingers in the UI.
+        self.last_finish = {
+            "player": p.name,
+            "leg_darts": p.leg_darts,
+            "checkout": self.turn_start_score,
+            "seq": self.dart_seq + 1,
+        }
         self.dart_seq += 1
         self.last_dart_label = hit.label
         self.last_dart_pos = list(position) if position else None
@@ -333,6 +380,7 @@ class X01Game:
         for q in self.players:
             q.score = self.start_score
             q.opened = False
+            q.leg_darts = 0
         self.leg_starter = (self.leg_starter + 1) % len(self.players)
         self.current = self.leg_starter
         self.turn = []
@@ -361,6 +409,7 @@ class X01Game:
             "dart_seq": self.dart_seq,
             "last_dart_label": self.last_dart_label,
             "last_dart_pos": self.last_dart_pos,
+            "last_finish": copy.deepcopy(self.last_finish),
             "_last_visit_turn": list(self._last_visit_turn),
             "_last_visit_pos": list(self._last_visit_pos),
             "_last_visit_conf": list(self._last_visit_conf),
@@ -385,6 +434,7 @@ class X01Game:
         self.dart_seq = snap.get("dart_seq", self.dart_seq)
         self.last_dart_label = snap.get("last_dart_label")
         self.last_dart_pos = snap.get("last_dart_pos")
+        self.last_finish = copy.deepcopy(snap.get("last_finish"))
         self._last_visit_turn = list(snap.get("_last_visit_turn", []))
         self._last_visit_pos = list(snap.get("_last_visit_pos", []))
         self._last_visit_conf = list(snap.get("_last_visit_conf", []))
@@ -450,4 +500,5 @@ class X01Game:
             "winner": self.winner.name if self.winner else None,
             "players": [p.to_dict() for p in self.players],
             "review": self.review,
+            "last_finish": self.last_finish,
         }

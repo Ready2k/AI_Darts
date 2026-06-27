@@ -34,6 +34,8 @@ def save_match(game):
                 "legs": p.legs,
                 "avg": round(p.three_dart_avg, 1),
                 "darts": p.total_darts,
+                "maxima": getattr(p, "maxima", 0),
+                "checkout_pct": round(getattr(p, "checkout_pct", 0.0), 1),
             }
             for p in game.players
         ],

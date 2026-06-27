@@ -18,7 +18,7 @@ import CinematicDemo from './cinematic/CinematicDemo'
 import CinematicGame from './cinematic/CinematicGame'
 import { unlockAudio, sound } from './cinematic/audio'
 import { SCRIPTS } from './cinematic/scripts'
-import { getAvatar } from './config/avatars'
+import { getAvatar, NEMESIS_AVATAR_ID, NEMESIS_NAME } from './config/avatars'
 
 const API_URL = 'http://localhost:8000/api'
 const WS_URL = 'ws://localhost:8000/ws/game'
@@ -177,7 +177,14 @@ function GameSetup({ onStarted }) {
   const usesLives = gameMode === 'Killer'
 
   const setPlayerName = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, name: v } : p)))
-  const setPlayerAvatar = (i, v) => setPlayers(players.map((p, j) => (j === i ? { ...p, avatar: v } : p)))
+  // Picking the nemesis persona pins the player as an AI named NEMESIS_NAME so
+  // the backend's nemesis ramp + trash-talk recognise it.
+  const setPlayerAvatar = (i, v) => setPlayers(players.map((p, j) => (
+    j === i
+      ? (v === NEMESIS_AVATAR_ID
+          ? { ...p, avatar: v, name: NEMESIS_NAME, is_ai: true, ai_level: p.ai_level || 'Semi Pro' }
+          : { ...p, avatar: v })
+      : p)))
   const setPlayerType = (i, is_ai) => setPlayers(players.map((p, j) => (j === i ? { ...p, is_ai } : p)))
   const setPlayerLevel = (i, ai_level) => setPlayers(players.map((p, j) => (j === i ? { ...p, ai_level } : p)))
   const addPlayer = () => players.length < 6 && setPlayers([...players, { name: `Player ${players.length + 1}`, avatar: 'pubguy', is_ai: false, ai_level: 'Beginner' }])

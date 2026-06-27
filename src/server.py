@@ -119,6 +119,10 @@ async def _watch_game():
                 if detect.GAME:
                     print("Game is over, saving match history...")
                     history.save_match(detect.GAME)
+                    # Nemesis: ramp its difficulty when it beats the humans.
+                    if detect.GAME.winner and ai.is_nemesis(detect.GAME.winner.name):
+                        total = ai.nemesis_record_win()
+                        print(f"[AI] {ai.NEMESIS_NAME} wins again — record now {total}")
                     # Advance the tournament bracket if a cup is in progress.
                     t = tournament.state()
                     if t is not None and t.get("status") == "active" and detect.GAME.winner:
@@ -417,6 +421,37 @@ def get_history():
 def get_leaderboard():
     """Returns the current leaderboard statistics."""
     return leaderboard.get_leaderboard()
+
+
+@app.get("/api/h2h")
+def get_h2h(a: str, b: str):
+    """Head-to-head record between two players from match history.
+    Returns {a, b, a_wins, b_wins, meetings, last_winner, never_met}."""
+    a = (a or "").strip()
+    b = (b or "").strip()
+    a_wins = b_wins = meetings = 0
+    last_winner = None
+    if a and b and a.lower() != b.lower():
+        for m in history.load_history():
+            names = {p.get("name", "").lower() for p in (m.get("players") or [])}
+            if a.lower() in names and b.lower() in names:
+                meetings += 1
+                w = (m.get("winner") or "")
+                if w.lower() == a.lower():
+                    a_wins += 1
+                    last_winner = a
+                elif w.lower() == b.lower():
+                    b_wins += 1
+                    last_winner = b
+                else:
+                    last_winner = last_winner  # draw / unknown winner
+    return {
+        "a": a, "b": b,
+        "a_wins": a_wins, "b_wins": b_wins,
+        "meetings": meetings,
+        "last_winner": last_winner,
+        "never_met": meetings == 0,
+    }
 
 @app.post("/api/game/correct")
 async def correct_game(request: Request):

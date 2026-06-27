@@ -6,14 +6,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Volume2, VolumeX, Star, Move, Pause, Play } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
-import { CSS, WalkOnCard, RulesCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti, WinScene } from './broadcastParts'
+import { CSS, WalkOnCard, RulesCard, H2HCard, SideChar, Panel, CricketScoreboard, KillerScoreboard, Confetti, WinScene } from './broadcastParts'
 import { themeFor, venueFor } from './modeThemes'
 import CrowdRow from '../art/CrowdRow'
 import KillerSpin from './KillerSpin'
 import { sound, crowd } from './audio'
 import { pickLine } from './commentary'
-import { getAvatar } from '../config/avatars'
+import { getAvatar, NEMESIS_NAME } from '../config/avatars'
 import { ThrowState } from '../config/timing'
+
+const API_URL = 'http://localhost:8000/api'
 
 // Player accent colours — cyan / rose first (matching the demo), then a spread
 // for 3-6 player games.
@@ -148,6 +150,8 @@ function winStats(game, p) {
     default: // X01
       return [
         ['3-DART AVG', dash(p.avg)],
+        ['180s', dash(p.maxima)],
+        ['CHECKOUT %', p.checkout_pct != null ? `${p.checkout_pct}%` : '—'],
         ['LEGS', dash(p.legs)],
         ['SETS', dash(p.sets)],
         ['DARTS', dash(p.darts)],
@@ -269,6 +273,8 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const [bigCall, setBigCall] = useState(null)
   const [crowdReact, setCrowdReact] = useState(false)  // visual crowd roar bounce
   const [winScene, setWinScene] = useState(null)       // { winnerIdx, pos } once per game-over
+  const [h2h, setH2h] = useState(null)                 // head-to-head record (2-player only)
+  const h2hRef = useRef(null)                          // mirror for use inside timers
 
   const winFiredRef = useRef(null)   // game-over signature already shown (once-only guard)
 
@@ -379,16 +385,50 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
         }, i === 0 ? 0 : i * STEP))
       })
       const afterWalkons = intro.length * STEP
-      // Rules card stays up until the user clicks "Let's play" — no auto-close.
-      walkTimers.current.push(setTimeout(() => {
+      const showRules = () => {
         setPhase('rules')
         sound.cheer(false)
         sound.say(rules.say, { rate: 0.96, priority: true })
-      }, afterWalkons))
+      }
+      // For 2-player games, slot a brief "tale of the tape" H2H card between the
+      // walk-ons and the rules. Fetch is fire-and-forget; if it fails or there's
+      // no data the card simply renders nothing and we fall straight to rules —
+      // the match is never blocked.
+      const twoUp = players.length === 2
+      if (twoUp) {
+        const [pa, pb] = players
+        h2hRef.current = null
+        // Deferred (microtask) so we don't setState synchronously in the effect.
+        Promise.resolve().then(() => setH2h(null))
+        fetch(`${API_URL}/h2h?a=${encodeURIComponent(pa.name)}&b=${encodeURIComponent(pb.name)}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => { if (d) setH2h(d) })
+          .catch(() => {})
+        const H2H_DWELL = 4500
+        walkTimers.current.push(setTimeout(() => {
+          // If the fetch failed entirely, skip the card and go straight to rules
+          // so we never show a blank screen.
+          const data = h2hRef.current
+          if (!data) { showRules(); return }
+          setPhase('h2h')
+          // A short needle line — revenge match vs first meeting.
+          if (!data.never_met) {
+            sound.say(`A rivalry renewed. ${pa.name} versus ${pb.name}.`, { rate: 0.97 })
+          } else {
+            sound.say(`First meeting — ${pa.name} against ${pb.name}.`, { rate: 0.97 })
+          }
+          walkTimers.current.push(setTimeout(showRules, H2H_DWELL))
+        }, afterWalkons))
+      } else {
+        // Rules card stays up until the user clicks "Let's play" — no auto-close.
+        walkTimers.current.push(setTimeout(showRules, afterWalkons))
+      }
     } else {
       walkTimers.current.push(setTimeout(() => setPhase('match'), 0))
     }
   }, [sig, isFresh, game, players.length, cinPlayers])
+
+  useEffect(() => { h2hRef.current = h2h }, [h2h])
 
   useEffect(() => () => walkTimers.current.forEach(clearTimeout), [])
 
@@ -482,7 +522,29 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     const th = themeFor(mode)
     let call = null
     let line = null   // optional spoken commentary for this big moment
-    if (game.over) {
+    let priorityLine = false  // must-play (feats) bypass the droppable commentary queue
+
+    // ── X01 FEAT stingers — fire on a leg-winning visit (last_finish), taking
+    // precedence over the plain GAME SHOT call so they never double up. A
+    // nine-dart finish (leg won in exactly 9 darts) or a high checkout (finish
+    // ≥ 100) each get a distinct themed overlay + roar + priority spoken call.
+    const lf = game.last_finish
+    const legWon = /wins the (leg|set)/i.test(msg) || game.over
+    let feat = null
+    if (x01 && lf && legWon && (lf.seq ?? -1) === seq) {
+      if (lf.leg_darts === 9) {
+        feat = { text: 'NINE DARTER', sub: 'PERFECT LEG', feat: true }
+        priorityLine = true; line = `Nine darter! ${lf.player} — a perfect leg!`
+      } else if (lf.checkout >= 100) {
+        feat = { text: String(lf.checkout), sub: 'HIGH CHECKOUT', feat: true }
+        priorityLine = true; line = `What a finish! ${lf.checkout} checkout!`
+      }
+    }
+
+    if (feat) {
+      call = feat
+    }
+    else if (game.over) {
       call = { ...th.win }
       line = pickLine('win', { name: game.winner || 'The winner' })
     }
@@ -513,11 +575,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
         requestAnimationFrame(() => setCrowdReact(true))
       }, 0)
       crowdReactTimer.current = setTimeout(() => setCrowdReact(false), 1200)
-      if (line) sound.say(line, { rate: 0.96 })
+      if (line) sound.say(line, priorityLine ? { rate: 0.94, priority: true } : { rate: 0.96 })
       clearTimeout(bigCallTimer.current)
       // Deferred to avoid synchronous setState inside the effect body.
       setTimeout(() => setBigCall(call), 0)
-      bigCallTimer.current = setTimeout(() => setBigCall(null), 2200)
+      // Feats linger a touch longer than the standard 2.2s big call.
+      bigCallTimer.current = setTimeout(() => setBigCall(null), call.feat ? 3000 : 2200)
     }
   }, [game])
 
@@ -633,6 +696,13 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       // New visit → announce the intro and reset the success baseline.
       prevTurnRef.current = cur
       prevProgressRef.current = activeProgress(game, cur)
+      // Nemesis trash-talk: when The Machine steps up, occasionally have the MC
+      // voice a needle line. Droppable (not priority) so it never blocks play.
+      const np = game.players?.[cur]
+      if (np && (np.name || '').toLowerCase() === NEMESIS_NAME.toLowerCase() && Math.random() < 0.4) {
+        const foe = (game.players || []).find((q) => q && q.name !== np.name)
+        sound.say(pickLine('nemesis', { name: np.name, foe: foe?.name || 'human' }), { rate: 0.95, pitch: 0.88 })
+      }
       // X01: vary the intro via the commentary bank (one variant is still the
       // classic "{name} needs N"). Other modes keep their mode-specific phrase.
       const mode = game.mode ?? 'X01'
@@ -767,7 +837,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           <AutodartsStatus status={game.autodarts} />
         </div>
         <div className="flex items-center gap-2">
-          {phase === 'walkon' && (
+          {(phase === 'walkon' || phase === 'h2h') && (
             <button onClick={skipIntro} className="cin-chipbtn">Skip to rules</button>
           )}
           {phase === 'match' && !game.over && onPause && (
@@ -801,6 +871,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
 
       {/* Walk-on intro */}
       {phase === 'walkon' && <WalkOnCard key={walkonIdx} pl={cinPlayers[walkonIdx]} />}
+
+      {/* Head-to-head "tale of the tape" (2-player games, between walk-ons and
+          rules). Renders only with both players; H2HCard no-ops without data. */}
+      {phase === 'h2h' && cinPlayers.length === 2 && (
+        <H2HCard a={cinPlayers[0]} b={cinPlayers[1]} h2h={h2h} theme={theme} onContinue={skipIntro} />
+      )}
 
       {/* Rules / how-to-play card */}
       {phase === 'rules' && <RulesCard rules={rulesFor(game)} players={cinPlayers} onStart={startMatch} theme={theme} />}
@@ -899,6 +975,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
               <div className="cin-elim">{bigCall.text}</div>
               <div className="cin-elim-sub">{bigCall.sub}</div>
             </>
+          ) : bigCall.feat ? (
+            <div className="cin-feat" style={{ '--feat-accent': theme.accent }}>
+              <div className="cin-feat-badge">★ FEAT ★</div>
+              <div className="cin-feat-text">{bigCall.text}</div>
+              <div className="cin-feat-sub">{bigCall.sub}</div>
+            </div>
           ) : (
             <>
               <div className="cin-bigcall">{bigCall.text}</div>

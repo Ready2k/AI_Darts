@@ -65,6 +65,16 @@ const LINES = {
     '{label} shut down by {name}!',
     'That\'s {label} closed for {name}!',
   ],
+  // The recurring AI nemesis ("The Machine") trash-talks. Short + droppable —
+  // these are flavour, never priority. ctx.name = the nemesis, ctx.foe = human.
+  nemesis: [
+    'The Machine does not miss.',
+    'Resistance is futile, {foe}.',
+    'You cannot out-throw a machine.',
+    '{name} is just warming up.',
+    'Calculating your defeat, {foe}.',
+    'The Machine has seen this leg before.',
+  ],
   // The match is won.
   win: [
     'Game shot! {name} takes it!',

@@ -115,6 +115,63 @@ export function RulesCard({ rules, players = [], onStart, theme }) {
   )
 }
 
+// ── Head-to-head "tale of the tape" ─────────────────────────────────────────
+// Shown briefly between the walk-ons and the rules card for 2-player games.
+// `h2h` is the /api/h2h payload ({a_wins, b_wins, meetings, last_winner,
+// never_met}); `a`/`b` are the cinPlayers (a = h2h.a). Degrades gracefully when
+// h2h is null (renders nothing) — the caller must guard the phase too.
+function H2HSide({ pl, wins, side }) {
+  return (
+    <div className={`flex-1 flex flex-col items-center gap-2 ${side === 'r' ? 'order-3' : ''}`}>
+      <div className="w-24 h-24 rounded-full overflow-hidden border-2 shrink-0"
+        style={{ borderColor: pl.color, background: pl.cardBg }}>
+        <Caricature variant={pl.variant} pose="idle" framing="bust" shirt={pl.color} className="w-full h-full" />
+      </div>
+      <div className="font-extrabold uppercase tracking-wide text-base truncate max-w-[10rem] text-center"
+        style={{ color: pl.color }}>{pl.name}</div>
+      <div className="text-6xl font-black tabular-nums" style={{ color: pl.color }}>{wins}</div>
+      <div className="text-[10px] tracking-[0.25em] uppercase text-white/40">wins</div>
+    </div>
+  )
+}
+
+export function H2HCard({ a, b, h2h, theme, onContinue }) {
+  if (!a || !b || !h2h) return null
+  const accent = theme?.accent || '#fbbf24'
+  const meetings = h2h.meetings || 0
+  const tale =
+    h2h.never_met ? 'First meeting'
+    : `${meetings} previous meeting${meetings === 1 ? '' : 's'}`
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
+      <div className="cin-h2h" style={{ boxShadow: `0 40px 120px rgba(0,0,0,.7), 0 0 90px ${accent}22` }}>
+        <div className="text-xs font-bold tracking-[0.45em] uppercase mb-1 cin-rise" style={{ color: accent }}>
+          ★ Head to head
+        </div>
+        <div className="cin-h2h-tale cin-rise2">{tale}</div>
+        <div className="flex items-stretch justify-center gap-2 mt-6">
+          <H2HSide pl={a} wins={h2h.a_wins || 0} side="l" />
+          <div className="order-2 flex flex-col items-center justify-center px-2">
+            <div className="text-4xl font-black text-white/30 leading-none">VS</div>
+            {!h2h.never_met && h2h.last_winner && (
+              <div className="mt-3 text-[10px] tracking-[0.2em] uppercase text-white/45 text-center">
+                Last:<br /><span className="text-white/80">{h2h.last_winner}</span>
+              </div>
+            )}
+          </div>
+          <H2HSide pl={b} wins={h2h.b_wins || 0} side="r" />
+        </div>
+        {onContinue && (
+          <button onClick={onContinue} className="cin-rules-go cin-rise3 mt-7"
+            style={{ animationDelay: '0.5s', background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 10px 30px ${accent}66` }}>
+            Continue ▶
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Lower-third scoreboard ──────────────────────────────────────────────────
 export function Panel({ pl, idx, score, stat, active, visitDarts, winnerIdx, mirror }) {
   const right = mirror ?? (idx === 1)
@@ -604,6 +661,24 @@ export const CSS = `
 .cin-flash { position:absolute; inset:0; background:#fff; animation: cin-flash-out .6s ease-out both; }
 @keyframes cin-flash-out { 0% { opacity:.6; } 100% { opacity:0; } }
 
+/* FEAT stinger — nine-darter / high checkout. Distinct themed treatment so a
+   rare feat reads bigger and brighter than a routine GAME SHOT. */
+.cin-feat { display:flex; flex-direction:column; align-items:center; text-align:center;
+  --feat-accent:#22d3ee; animation: cin-feat-in .55s cubic-bezier(.2,1.5,.3,1) both; }
+.cin-feat-badge { font-weight:900; letter-spacing:.5em; font-size:clamp(12px,1.7vw,20px);
+  color:var(--feat-accent); text-shadow:0 0 22px var(--feat-accent); margin-bottom:8px;
+  animation: cin-feat-pulse 1.1s ease-in-out infinite; }
+.cin-feat-text { font-size:clamp(72px, 15vw, 190px); font-weight:900; line-height:.9;
+  background:linear-gradient(180deg, #fff 10%, var(--feat-accent) 60%, #fff);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 10px 50px var(--feat-accent)); }
+.cin-feat-sub { margin-top:12px; font-weight:800; letter-spacing:.4em; text-transform:uppercase;
+  color:#fff; font-size:clamp(13px, 2vw, 26px); text-shadow:0 0 30px var(--feat-accent);
+  animation: cin-up .5s .15s both; }
+@keyframes cin-feat-in { 0% { opacity:0; transform:scale(2.8) rotate(-4deg); }
+  55% { opacity:1; transform:scale(.95) rotate(1deg); } 100% { transform:scale(1) rotate(0); } }
+@keyframes cin-feat-pulse { 0%,100% { opacity:.65; } 50% { opacity:1; } }
+
 .cin-confetti { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:45; }
 .cin-confetti i { position:absolute; top:-6vh; border-radius:2px; opacity:.95;
   animation-name: cin-fall; animation-timing-function: linear; animation-iteration-count: infinite; }
@@ -615,6 +690,14 @@ export const CSS = `
   border:1px solid rgba(255,255,255,.12);
   box-shadow: 0 40px 120px rgba(0,0,0,.7), 0 0 90px rgba(125,170,255,.12);
   animation: cin-pop-in .6s cubic-bezier(.2,1.4,.3,1) both; }
+.cin-h2h { width:min(640px, 92vw); border-radius:26px; padding:30px 34px 28px; text-align:center;
+  background:linear-gradient(180deg, rgba(18,21,31,.97), rgba(10,12,18,.97));
+  border:1px solid rgba(255,255,255,.12);
+  animation: cin-pop-in .6s cubic-bezier(.2,1.4,.3,1) both; }
+.cin-h2h-tale { font-size:clamp(26px, 4.4vw, 42px); font-weight:900; line-height:1;
+  background:linear-gradient(100deg, #fff 20%, #8be3ff 50%, #fff 80%);
+  background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation: cin-shine 3.5s linear infinite; }
 .cin-rules-title { font-size:clamp(40px, 7vw, 76px); line-height:.95; font-weight:900;
   background:linear-gradient(100deg, #fff 20%, #8be3ff 45%, #fff 60%, #ff9ad5 82%);
   background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;

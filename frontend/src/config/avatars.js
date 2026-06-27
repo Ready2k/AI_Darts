@@ -16,7 +16,18 @@ export const AVATARS = [
   { id: 'cowboy',   name: 'Lone Shooter',    variant: 'cowboy',   bg: '#c49a5a', theme: 'cowboy' },
   { id: 'rockstar', name: 'The Axe Man',     variant: 'rockstar', bg: '#7c3f91', theme: 'rockstar' },
   { id: 'posh',     name: 'Lord Double',     variant: 'posh',     bg: '#4a7a6a', theme: 'fanfare' },
+  // Recurring AI nemesis. `isNemesis` flags it for setup (forces the player name
+  // to NEMESIS_NAME so the backend's nemesis ramp + trash-talk engage). Uses the
+  // cyberpunk caricature for a cold, machine-like look.
+  { id: 'nemesis',  name: 'The Machine',     variant: 'cyberpunk', bg: '#2b3a55', theme: 'cyber',
+    accessories: ['darts', 'trophy', 'crown'],
+    catchphrase: 'The Machine does not miss.', isNemesis: true },
 ]
+
+// The recurring nemesis's fixed in-game player name — must match ai.NEMESIS_NAME
+// on the backend so its difficulty ramp + trash-talk are recognised.
+export const NEMESIS_NAME = 'The Machine'
+export const NEMESIS_AVATAR_ID = 'nemesis'
 
 // Valid building blocks (must match what Caricature.jsx actually draws).
 export const VARIANT_IDS   = ['pubguy', 'cyberpunk', 'ninja', 'wizard', 'viking', 'cowboy', 'rockstar', 'posh']
