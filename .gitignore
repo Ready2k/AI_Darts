@@ -46,3 +46,4 @@ frontend/dist/
 frontend/.npm/
 frontend/.eslintcache
 frontend/.vite/
+tournament.json

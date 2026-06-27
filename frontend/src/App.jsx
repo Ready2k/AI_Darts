@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Settings, LineChart, Target, Camera, Crosshair,
   Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star,
-  Maximize2, Minimize2, Menu, ChevronLeft, Power
+  Maximize2, Minimize2, Menu, ChevronLeft, Power, Swords
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell
@@ -10,6 +10,7 @@ import {
 import DartBoard from './DartBoard'
 import AvatarPicker from './components/AvatarPicker'
 import OcheCam from './components/OcheCam'
+import Tournament from './components/Tournament'
 import Caricature from './art/Caricature'
 import { useThrowAnimation } from './hooks/useThrowAnimation'
 import { ThrowState } from './config/timing'
@@ -764,6 +765,7 @@ const TABS = [
   { name: 'Live Track', icon: Target },
   { name: 'Align', icon: Crosshair },
   { name: 'Cameras', icon: Camera },
+  { name: 'Cups', icon: Swords },
   { name: 'Stats', icon: LineChart },
   { name: 'Leaderboard', icon: Trophy },
   { name: 'Settings', icon: Settings },
@@ -1426,6 +1428,21 @@ function App() {
             )
           )}
 
+          {activeTab === 'Cups' && (
+            <Tournament
+              tournament={uiGame?.tournament || null}
+              onStart={async (payload) => {
+                await fetch(`${API_URL}/tournament/new`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }).catch(() => {})
+                setAutoStartDetect(true); setCinematic(true); refresh(); setActiveTab('Live Track')
+              }}
+              onNext={async () => {
+                await fetch(`${API_URL}/tournament/next`, { method: 'POST', headers: JSON_HEADERS }).catch(() => {})
+                setAutoStartDetect(true); setCinematic(true); refresh()
+              }}
+              onEnd={async () => { await fetch(`${API_URL}/tournament/end`, { method: 'POST', headers: JSON_HEADERS }).catch(() => {}); refresh() }}
+              onGoLive={() => setActiveTab('Live Track')}
+            />
+          )}
           {activeTab === 'Stats' && <Stats game={uiGame} />}
           {activeTab === 'Leaderboard' && <Leaderboard />}
 

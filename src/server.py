@@ -19,6 +19,7 @@ import history
 import leaderboard
 import ai
 import autodarts_adapter
+import tournament
 
 # ── Persistent detection config ─────────────────────────────────────────────────
 # Precedence: env var > server_config.json > hardcoded default.
@@ -55,7 +56,11 @@ _autodarts_task = None
 
 def current_state():
     """Serialisable game state for the scoreboard, or a placeholder."""
-    return detect.game_state() or {"running": False}
+    s = detect.game_state() or {"running": False}
+    t = tournament.state()
+    if t is not None:
+        s["tournament"] = t
+    return s
 
 
 class GameHub:
@@ -114,6 +119,11 @@ async def _watch_game():
                 if detect.GAME:
                     print("Game is over, saving match history...")
                     history.save_match(detect.GAME)
+                    # Advance the tournament bracket if a cup is in progress.
+                    t = tournament.state()
+                    if t is not None and t.get("status") == "active" and detect.GAME.winner:
+                        tournament.record_result(detect.GAME.winner.name)
+                        print(f"[cup] {detect.GAME.winner.name} advances")
                 # Flush/close any debug recording so the video + telemetry are
                 # finalised and ready to zip up.
                 detect.dbg.stop()
@@ -128,6 +138,7 @@ async def _watch_game():
 @asynccontextmanager
 async def lifespan(app):
     global _autodarts_task
+    tournament.load()   # restore an in-progress cup across restarts
     watcher = asyncio.create_task(_watch_game())
     ai_task = asyncio.create_task(ai.ai_loop())
     if DETECTION_SOURCE == "autodarts":
@@ -322,6 +333,50 @@ async def pause_game(request: Request):
     paused = bool(body.get("paused", not cur))
     detect.STATUS["paused"] = paused
     return {"ok": True, "paused": paused, "game": detect.game_state()}
+
+
+def _start_current_tie():
+    """Start the next pending tie of the active tournament via detect.new_game."""
+    cm = tournament.current_match()
+    if cm is None or cm.get("a") is None or cm.get("b") is None:
+        return False
+    t = tournament.state()
+    cfg = dict(t.get("config") or {})
+    detect.new_game(players=[cm["a"], cm["b"]], mode=t.get("mode"), **cfg)
+    return True
+
+
+@app.post("/api/tournament/new")
+async def tournament_new(request: Request):
+    """Create a single-elimination cup and start the first tie.
+    Body: {players[], mode, start_score, legs_to_win, ...}."""
+    cfg = await request.json()
+    keys = ("start_score", "double_in", "check_in", "double_out", "rounds",
+            "lives", "killer_in", "legs_to_win", "sets_to_win")
+    config = {k: cfg[k] for k in keys if cfg.get(k) is not None}
+    t = tournament.create(cfg.get("players") or [], mode=cfg.get("mode"), config=config)
+    if t is None:
+        return {"ok": False, "error": "need at least 2 players"}
+    _start_current_tie()
+    return {"ok": True, "tournament": tournament.state(), "current": tournament.current_match()}
+
+
+@app.get("/api/tournament")
+def tournament_get():
+    return {"tournament": tournament.state(), "current": tournament.current_match()}
+
+
+@app.post("/api/tournament/next")
+def tournament_next():
+    """Start the next pending tie (call after the previous one finished)."""
+    ok = _start_current_tie()
+    return {"ok": ok, "tournament": tournament.state(), "current": tournament.current_match()}
+
+
+@app.post("/api/tournament/end")
+def tournament_end():
+    tournament.clear()
+    return {"ok": True}
 
 
 @app.post("/api/game/end")
