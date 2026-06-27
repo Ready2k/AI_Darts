@@ -210,12 +210,57 @@ function pickVoice() {
   return cachedVoice
 }
 
+// ── Managed speech queue ─────────────────────────────────────────────────────
+// SpeechSynthesis.speak() only enqueues — no overlap guard, no staleness. Over a
+// match the MC lines pile up, talk over each other and drift behind the action.
+// We serialise utterances (one at a time, chained on `onend`) and drop stale,
+// *droppable* commentary so what's spoken stays in sync with what's on screen.
+// `priority` lines (walk-on intros, rules, game-shot) always play through.
+let _speechQ = []
+let _speaking = false
+
+function _clearSpeech() {
+  _speechQ = []
+  _speaking = false
+  try { window.speechSynthesis?.cancel() } catch { /* no-op */ }
+}
+
+function _drainSpeech() {
+  if (_speaking || !window.speechSynthesis) return
+  const now = Date.now()
+  // Skip droppable lines that have aged out — speaking them now would lag play.
+  while (_speechQ.length && _speechQ[0].drop && now - _speechQ[0].t > _speechQ[0].ttl) {
+    _speechQ.shift()
+  }
+  const item = _speechQ.shift()
+  if (!item) return
+  const u = new SpeechSynthesisUtterance(item.text)
+  const v = pickVoice()
+  if (v) u.voice = v
+  u.rate = item.rate
+  u.pitch = item.pitch
+  u.volume = 1
+  // Watchdog: some browsers drop `onend`, which would wedge the queue forever.
+  // Estimate the utterance length and force-advance if `onend` never fires.
+  const estMs = Math.min(12000, 700 + item.text.length * 75)
+  let wd = null
+  const done = () => {
+    if (wd) { clearTimeout(wd); wd = null }
+    if (_speaking) { _speaking = false; _drainSpeech() }
+  }
+  _speaking = true
+  u.onend = done
+  u.onerror = done
+  wd = setTimeout(done, estMs + 1500)
+  window.speechSynthesis.speak(u)
+}
+
 export const sound = {
   get enabled() { return enabled },
   setEnabled(v) {
     enabled = v
     if (!v) {
-      window.speechSynthesis?.cancel()
+      _clearSpeech()
       crowd.stop()      // silence the ambience bed on mute
     }
   },
@@ -430,20 +475,18 @@ export const sound = {
     })
   },
 
-  // Referee / MC voice.
-  say(text, { rate = 0.98, pitch = 0.92 } = {}) {
-    if (!enabled || !window.speechSynthesis) return
-    const u = new SpeechSynthesisUtterance(text)
-    const v = pickVoice()
-    if (v) u.voice = v
-    u.rate = rate
-    u.pitch = pitch
-    u.volume = 1
-    window.speechSynthesis.speak(u)
+  // Referee / MC voice. Routed through the managed queue so lines never overlap
+  // and stale commentary is dropped to stay in sync. `priority: true` marks a
+  // must-play line (walk-on intro, rules, game-shot) that is never dropped;
+  // `ttl` is how long a droppable line may wait before it's skipped.
+  say(text, { rate = 0.98, pitch = 0.92, ttl = 3000, priority = false } = {}) {
+    if (!enabled || !window.speechSynthesis || !text) return
+    _speechQ.push({ text, rate, pitch, t: Date.now(), ttl, drop: !priority })
+    _drainSpeech()
   },
 
   stop() {
-    window.speechSynthesis?.cancel()
+    _clearSpeech()
     crowd.stop()
   },
 }

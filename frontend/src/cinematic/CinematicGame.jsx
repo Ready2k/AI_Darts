@@ -368,8 +368,8 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       const announce = (pl) => {
         sound.cheer(false)
         sound.walkOnTheme(pl.theme)   // persona entrance sting
-        sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04 })
-        if (pl.catchphrase) sound.say(pl.catchphrase, { rate: 0.98, pitch: 1.0 })
+        sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04, priority: true })
+        if (pl.catchphrase) sound.say(pl.catchphrase, { rate: 0.98, pitch: 1.0, priority: true })
       }
       sound.stop()
       const STEP = 3000
@@ -383,7 +383,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       walkTimers.current.push(setTimeout(() => {
         setPhase('rules')
         sound.cheer(false)
-        sound.say(rules.say, { rate: 0.96 })
+        sound.say(rules.say, { rate: 0.96, priority: true })
       }, afterWalkons))
     } else {
       walkTimers.current.push(setTimeout(() => setPhase('match'), 0))
@@ -424,7 +424,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
     sound.stop()
-    sound.say(rulesFor(game).say, { rate: 0.96 })
+    sound.say(rulesFor(game).say, { rate: 0.96, priority: true })
     setPhase('rules')
   }
 
@@ -434,12 +434,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
     if ((game?.mode) === 'Killer') {
-      sound.say('Spin for your numbers!', { rate: 0.98 })
+      sound.say('Spin for your numbers!', { rate: 0.98, priority: true })
       setPhase('spin')
       return
     }
     sound.cheer(false)
-    sound.say('Game on!', { rate: 0.9 })
+    sound.say('Game on!', { rate: 0.9, priority: true })
     setPhase('match')
   }
 
@@ -447,7 +447,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const confirmNumbers = async (numbers) => {
     try { await onAssignNumbers?.(numbers) } catch { /* non-fatal */ }
     sound.cheer(false)
-    sound.say('Game on!', { rate: 0.9 })
+    sound.say('Game on!', { rate: 0.9, priority: true })
     setPhase('match')
   }
 
