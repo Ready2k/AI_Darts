@@ -165,7 +165,8 @@ function toCinPlayer(p, idx, avatarMap) {
     color: COLORS[idx] || COLORS[0],
     cardBg: av.bg,
     theme: av.theme,
-    accessories: DEFAULT_ACCESSORIES,
+    accessories: (av.accessories && av.accessories.length) ? av.accessories : DEFAULT_ACCESSORIES,
+    catchphrase: av.catchphrase || null,
     bio: p.darts > 0 ? `Average ${p.avg} · ${p.legs} legs won` : 'Stepping up to the oche',
   }
 }
@@ -368,6 +369,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
         sound.cheer(false)
         sound.walkOnTheme(pl.theme)   // persona entrance sting
         sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04 })
+        if (pl.catchphrase) sound.say(pl.catchphrase, { rate: 0.98, pitch: 1.0 })
       }
       sound.stop()
       const STEP = 3000
