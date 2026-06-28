@@ -384,12 +384,112 @@ async function _initKokoro() {
       },
     })
     _kokoroReady = true
+    _primeOnce()   // fire-and-forget warm the static-phrase cache
   } catch (e) {
     _kokoroError = String(e)
     console.error('Kokoro init failed:', e)
   } finally {
     _kokoroLoading = false
   }
+}
+
+// ── Kokoro audio cache (memory + IndexedDB) ──────────────────────────────────
+// Kokoro output is a pure function of voice + speed + text (pitch unused, volume
+// applied at playback), so identical lines need synthesising only once. Cache
+// the raw PCM; rebuild a fresh AudioBuffer per playback (buffers are one-shot).
+const _CACHE_MAX = 300
+const _ttsMem = new Map()   // key → { pcm: Float32Array, rate: <sampling_rate> }
+
+function _cacheKey(voiceId, speed, text) { return `${voiceId}|${speed}|${text}` }
+
+function _cacheGet(key) { return _ttsMem.get(key) || null }
+
+function _cachePut(key, pcm, sampling_rate) {
+  if (_ttsMem.has(key)) return
+  if (_ttsMem.size >= _CACHE_MAX) {
+    const oldest = _ttsMem.keys().next().value   // Map keeps insertion order
+    if (oldest !== undefined) _ttsMem.delete(oldest)
+  }
+  _ttsMem.set(key, { pcm, rate: sampling_rate })
+}
+
+// IndexedDB persistence — survives reloads. Every call is try/caught and
+// degrades silently (private mode / blocked storage) so it never throws into
+// the speech path.
+const _IDB_NAME = 'darts_tts'
+const _IDB_STORE = 'clips'
+let _idbPromise = null
+
+function _idbOpen() {
+  if (_idbPromise) return _idbPromise
+  _idbPromise = new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') { resolve(null); return }
+      const req = indexedDB.open(_IDB_NAME, 1)
+      req.onupgradeneeded = () => {
+        try { req.result.createObjectStore(_IDB_STORE, { keyPath: 'key' }) } catch { /* no-op */ }
+      }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => resolve(null)
+    } catch { resolve(null) }
+  })
+  return _idbPromise
+}
+
+async function _idbGet(key) {
+  try {
+    const db = await _idbOpen(); if (!db) return null
+    return await new Promise((resolve) => {
+      const tx = db.transaction(_IDB_STORE, 'readonly')
+      const req = tx.objectStore(_IDB_STORE).get(key)
+      req.onsuccess = () => resolve(req.result || null)
+      req.onerror = () => resolve(null)
+    })
+  } catch { return null }
+}
+
+async function _idbPut(key, pcm, sampling_rate) {
+  try {
+    const db = await _idbOpen(); if (!db) return
+    await new Promise((resolve) => {
+      const tx = db.transaction(_IDB_STORE, 'readwrite')
+      tx.oncomplete = resolve
+      tx.onerror = resolve
+      tx.onabort = resolve
+      tx.objectStore(_IDB_STORE).put({ key, pcm, rate: sampling_rate })
+    })
+  } catch { /* no-op */ }
+}
+
+// Memory first, then IDB; on an IDB hit, hydrate memory so the next lookup is sync.
+async function _cacheLookup(key) {
+  const mem = _cacheGet(key)
+  if (mem) return mem
+  const row = await _idbGet(key)
+  if (row?.pcm) { _cachePut(key, row.pcm, row.rate); return { pcm: row.pcm, rate: row.rate } }
+  return null
+}
+
+// Build a one-shot AudioBuffer from cached/fresh PCM.
+function _renderKokoroToBuffer(pcm, sampleRate) {
+  const c = ac(); if (!c) return null
+  const buf = c.createBuffer(1, pcm.length, sampleRate)
+  buf.copyToChannel(pcm, 0)
+  return buf
+}
+
+// Play a buffer through a gain node (item.volume) and resolve on end.
+function _playBuffer(buf, item) {
+  const c = ac(); if (!c || !buf) return Promise.resolve()
+  const src = c.createBufferSource()
+  src.buffer = buf
+  const g = c.createGain()
+  g.gain.value = Math.min(1, Math.max(0, item.volume ?? 1))
+  src.connect(g).connect(c.destination)
+  return new Promise((resolve) => {
+    src.onended = resolve
+    src.start()
+  })
 }
 
 function _selectedKokoroVoiceId() {
@@ -402,26 +502,76 @@ function _isKokoroVoiceSelected() {
   return getSelectedVoiceURI()?.startsWith('kokoro:') ?? false
 }
 
+// Generate (or fetch cached) PCM for a line and write through to both caches.
+// Returns { pcm, rate } or null. Does not play.
+async function _kokoroRender(voiceId, speed, text) {
+  const key = _cacheKey(voiceId, speed, text)
+  const hit = await _cacheLookup(key)
+  if (hit) return hit
+  const audio = await _kokoroTTS.generate(text, { voice: voiceId, speed })
+  const pcm = audio.audio ?? audio.data   // RawAudio uses .audio; guard for API changes
+  const rate = audio.sampling_rate
+  _cachePut(key, pcm, rate)
+  _idbPut(key, pcm, rate)   // fire-and-forget write-through
+  return { pcm, rate }
+}
+
 async function _speakKokoro(item) {
   if (item.drop && Date.now() - item.t > item.ttl) return
   const voiceId = _selectedKokoroVoiceId()
-  const audio = await _kokoroTTS.generate(item.text, {
-    voice: voiceId,
-    speed: Math.max(0.5, Math.min(2, item.rate)),
-  })
-  const c = ac(); if (!c) return
-  const pcm = audio.audio ?? audio.data   // RawAudio uses .audio; guard for API changes
-  const buf = c.createBuffer(1, pcm.length, audio.sampling_rate)
-  buf.copyToChannel(pcm, 0)
-  const src = c.createBufferSource()
-  src.buffer = buf
-  const g = c.createGain()
-  g.gain.value = Math.min(1, Math.max(0, item.volume ?? 1))
-  src.connect(g).connect(c.destination)
-  await new Promise((resolve) => {
-    src.onended = resolve
-    src.start()
-  })
+  const speed = Math.max(0.5, Math.min(2, item.rate))
+  const clip = await _kokoroRender(voiceId, speed, item.text)
+  if (!clip) return
+  const buf = _renderKokoroToBuffer(clip.pcm, clip.rate)
+  if (!buf) return
+  await _playBuffer(buf, item)
+}
+
+// ── Speech priming ───────────────────────────────────────────────────────────
+// Voice/game-independent static commentary (no {placeholders}). Copied verbatim
+// from commentary.js / App.jsx / CinematicGame.jsx so the cache keys match what's
+// actually spoken. Synthesised once on Kokoro init so they play instantly later.
+const PRIME_PHRASES = [
+  // checkoutMiss (commentary.js)
+  '<speak><prosody pitch="-1st" rate="slow">Just missed it!</prosody></speak>',
+  '<speak><emphasis level="moderate">Agonising</emphasis> — so close!</speak>',
+  '<speak>Rattled the wire!</speak>',
+  '<speak><prosody rate="0.9" pitch="-1st">Not this time.</prosody></speak>',
+  '<speak>Oh, <prosody pitch="-1st">he\'ll be sick with that.</prosody></speak>',
+  // killerArm — the only no-placeholder variant
+  '<speak><prosody rate="fast" pitch="+2st">Locked and loaded!</prosody></speak>',
+  // Game on! (CinematicGame.jsx)
+  '<speak><prosody rate="0.85" pitch="+1st">Game <break time="200ms"/> on!</prosody></speak>',
+  // Spin for your numbers! (CinematicGame.jsx)
+  '<speak><prosody rate="fast" pitch="+2st">Spin for your numbers!</prosody></speak>',
+  // One hundred and eighty! (App.jsx)
+  '<speak><prosody rate="fast" pitch="+3st">One hundred and eighty!</prosody></speak>',
+  // Game shot! (App.jsx — plain string)
+  'Game shot!',
+]
+
+// Synthesise + cache the given raw lines without playing them. No-op unless a
+// Kokoro voice is selected and ready. Runs segments sequentially so the WASM
+// thread isn't thrashed; errors are swallowed per-line.
+async function primeSpeech(rawLines, { rate = 0.96 } = {}) {
+  if (!_isKokoroVoiceSelected() || !_kokoroReady) return
+  const voiceId = _selectedKokoroVoiceId()
+  for (const raw of rawLines || []) {
+    try {
+      for (const seg of parseSSML(raw)) {
+        const speed = Math.max(0.5, Math.min(2, rate * seg.rate))
+        if (_cacheGet(_cacheKey(voiceId, speed, seg.text))) continue
+        await _kokoroRender(voiceId, speed, seg.text)
+      }
+    } catch { /* swallow per-line */ }
+  }
+}
+
+let _primed = false
+function _primeOnce() {
+  if (_primed) return
+  _primed = true
+  primeSpeech(PRIME_PHRASES).catch(() => {})
 }
 
 /**
@@ -908,6 +1058,9 @@ export const sound = {
     }
     _drainSpeech()
   },
+
+  // Pre-synthesise + cache lines without playing (warms the Kokoro cache).
+  primeSpeech(rawLines, opts) { return primeSpeech(rawLines, opts) },
 
   stop() {
     _clearSpeech()
