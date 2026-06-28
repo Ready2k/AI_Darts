@@ -370,6 +370,21 @@ export function kokoroStatus() {
 
 export function setKokoroProgressCallback(cb) { _kokoroProgressCb = cb }
 
+/**
+ * If a Kokoro voice is selected, triggers init (if not already started) and
+ * returns a Promise that resolves once the model is ready. Resolves immediately
+ * if Kokoro is not selected or already ready.
+ */
+export function waitForKokoro() {
+  if (!_isKokoroVoiceSelected() || _kokoroReady) return Promise.resolve()
+  if (!_kokoroLoading) _initKokoro()
+  return new Promise((resolve) => {
+    const check = setInterval(() => {
+      if (_kokoroReady || _kokoroError) { clearInterval(check); resolve() }
+    }, 150)
+  })
+}
+
 async function _initKokoro() {
   if (_kokoroReady || _kokoroLoading) return
   _kokoroLoading = true

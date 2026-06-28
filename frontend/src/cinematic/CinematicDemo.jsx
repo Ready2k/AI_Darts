@@ -7,7 +7,8 @@ import { X, Volume2, VolumeX, FastForward } from 'lucide-react'
 import BroadcastBoard from './BroadcastBoard'
 import { mmToPct } from './geometry'
 import { SCRIPTS } from './scripts'
-import { sound } from './audio'
+import { sound, crowd, waitForKokoro } from './audio'
+import CrowdRow from '../art/CrowdRow'
 import { CSS, WalkOnCard, SideChar, Panel, Confetti, WinnerCard } from './broadcastParts'
 
 const CANCEL = Symbol('cancelled')
@@ -33,6 +34,8 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
   const [replaying, setReplaying] = useState(false)
   const [winnerIdx, setWinnerIdx] = useState(null)
   const [muted, setMuted] = useState(!sound.enabled)
+  const [crowdReact, setCrowdReact] = useState(false)
+  const crowdReactTimer = useRef(null)
 
   const tokenRef = useRef(null)
   const skipRef = useRef(null)
@@ -40,6 +43,16 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
   const idRef = useRef(0)
   const replayDartRef = useRef(null)
   const busyRef = useRef(false)
+
+  const triggerCrowdRoar = () => {
+    crowd.roar()
+    clearTimeout(crowdReactTimer.current)
+    setCrowdReact(false)
+    setTimeout(() => {
+      setCrowdReact(true)
+    }, 0)
+    crowdReactTimer.current = setTimeout(() => setCrowdReact(false), 1200)
+  }
 
   const makeW = (token) => (ms) =>
     new Promise((res, rej) => setTimeout(() => (token.cancelled ? rej(CANCEL) : res()), ms))
@@ -78,6 +91,16 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
     await W(800)
     setReplaying(false)
   }
+
+  useEffect(() => {
+    if (phase === 'match') {
+      crowd.start()
+      crowd.setIntensity(0.45)
+    } else {
+      crowd.stop()
+    }
+    return () => crowd.stop()
+  }, [phase])
 
   useEffect(() => {
     const token = { cancelled: false }
@@ -119,6 +142,9 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
     }
 
     const show = async () => {
+      // Wait for Kokoro to finish loading if it's the selected voice backend.
+      await waitForKokoro()
+
       // ── Intro (skippable) ──
       let skipped = false
       const skipP = new Promise((res) => { skipRef.current = () => { skipped = true; res() } })
@@ -132,8 +158,14 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
         setPhase('walkon')
         sound.stop()
         sound.cheer(false)
-        // PLAYERS[i].announce may be plain text or SSML from scripts.js
-        sound.say(PLAYERS[i].announce, { rate: 1.02, pitch: 1.05 })
+        crowd.roar()
+        // Wrap plain-text announce in SSML for better prosody — name gets a
+        // dramatic pause before it, nick gets emphasis.
+        const raw = PLAYERS[i].announce
+        const ssml = raw.startsWith('<speak>')
+          ? raw
+          : `<speak><prosody rate="0.95">${raw}</prosody></speak>`
+        sound.say(ssml, { priority: true })
         await WS(5600)
       }
       skipRef.current = null
@@ -144,6 +176,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       setBigCall({ text: 'GAME ON!', sub: MATCH.subtitle })
       sound.say('<speak><prosody rate="0.85" pitch="+1st">Game <break time="300ms"/> on!</prosody></speak>', { rate: 0.88 })
       sound.cheer(false)
+      crowd.roar()
       await W(2400)
       setBigCall(null)
 
@@ -156,6 +189,11 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
         setActiveP(p)
         setVisitDarts([])
         setHint(visit.hint || null)
+        if (visit.hint) {
+          crowd.hush()
+        } else {
+          crowd.setIntensity(0.45)
+        }
         setBanner(`${pl.name.toUpperCase()} TO THROW`)
         if (visit.requireCall) sound.say(visit.requireCall, { rate: 0.96 })
         await W(visit.requireCall ? 2800 : 1500)
@@ -169,7 +207,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
         await W(350)
         if (visit.gameShot) {
           // ── Finale ──
-          sound.cheer(true)
+          triggerCrowdRoar()
           // visit.call may be SSML or plain text — say() handles both
           sound.say(visit.call, { rate: 0.88, pitch: 1.0 })
           setBigCall({ text: 'GAME SHOT!', sub: `${pl.name.toUpperCase()} IS THE CHAMPION` })
@@ -184,7 +222,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           return
         }
         if (visit.big) {
-          sound.cheer(true)
+          triggerCrowdRoar()
           shake(2)
           setBigCall({ text: '180', sub: 'ONE HUNDRED AND EIGHTY!' })
           sound.say(visit.call, { rate: 0.82, pitch: 1.05 })  // visit.call may be SSML
@@ -194,7 +232,10 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           setPose(p, 'idle')
         } else {
           sound.say(visit.call, { rate: 0.98 })
-          if (visit.total >= 100) sound.cheer(false)
+          if (visit.total >= 100) {
+            sound.cheer(false)
+            crowd.roar()
+          }
           await W(1600)
         }
 
@@ -209,6 +250,8 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
     return () => {
       token.cancelled = true
       sound.stop()
+      crowd.stop()
+      clearTimeout(crowdReactTimer.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -232,11 +275,16 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
   const inMatch = phase === 'match' || phase === 'winner'
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden text-white select-none">
+    <div className={`fixed inset-0 z-50 overflow-hidden text-white select-none ${crowdReact ? 'cin-crowd-react' : ''}`}>
       <style>{CSS}</style>
       <div className="cin-bg" />
       <div className="cin-spot cin-spot-a" />
       <div className="cin-spot cin-spot-b" />
+      <div className="cin-crowd">
+        <div className="cin-crowd-sway w-full h-full">
+          <CrowdRow accent={PLAYERS[activeP]?.color || '#22d3ee'} />
+        </div>
+      </div>
 
       {/* Top bar */}
       <div className="absolute top-0 inset-x-0 flex items-center justify-between px-6 py-4 z-50">
