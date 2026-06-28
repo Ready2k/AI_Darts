@@ -425,7 +425,7 @@ export const crowd = {
       })
     })
   }
-},
+}
 
 // ── Walk-on theme stings ─────────────────────────────────────────────────────
 // A few sequenced oscillator notes per persona vibe. Synth-only; respects mute.
