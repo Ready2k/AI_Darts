@@ -222,25 +222,64 @@ export const crowd = {
     g.linearRampToValueAtTime(0.05, t + 0.5) // fade bed down to 5% volume
   },
 
-  roar() {
-    console.log("Crowd: roar() triggered. running:", crowdState.running, "hasRoarBuffer:", !!crowdState.roarBuffer, "enabled:", enabled)
+  roar(type = 'normal') {
+    console.log(`Crowd: roar(${type}) triggered. running:`, crowdState.running, "hasRoarBuffer:", !!crowdState.roarBuffer, "enabled:", enabled)
     if (!enabled || !crowdState.running || !crowdState.roarBuffer) return
     const c = ac(); if (!c) return
     const t = c.currentTime
 
-    // Play one-shot roar at full volume, bypassing the bed's masterGain
-    const roarSrc = c.createBufferSource()
-    roarSrc.buffer = crowdState.roarBuffer
-    
-    const roarGain = c.createGain()
-    roarGain.gain.setValueAtTime(0, t)
-    roarGain.gain.linearRampToValueAtTime(0.3, t + 0.15) // quick swell
-    roarGain.gain.setValueAtTime(0.3, t + 1.5)
-    roarGain.gain.exponentialRampToValueAtTime(0.0001, t + 4.5) // natural decay
+    // Define layers based on the roar type to create a rich, dense crowd sound
+    let layers = []
+    if (type === '180') {
+      layers = [
+        { delay: 0.0, rate: 1.0, gain: 0.35 },
+        { delay: 0.08, rate: 1.06, gain: 0.25 }
+      ]
+    } else if (type === 'nine-darter') {
+      layers = [
+        { delay: 0.0, rate: 1.0, gain: 0.4 },
+        { delay: 0.12, rate: 0.92, gain: 0.3 },   // deep stadium wave
+        { delay: 0.25, rate: 1.12, gain: 0.25 }   // ecstatic high-pitched cheer
+      ]
+    } else if (type === 'win') {
+      layers = [
+        { delay: 0.0, rate: 1.0, gain: 0.4 },
+        { delay: 0.18, rate: 0.95, gain: 0.32 },  // second wave
+        { delay: 0.4, rate: 1.05, gain: 0.28 },   // third wave
+        { delay: 0.75, rate: 0.88, gain: 0.22 }   // deep stadium rumble/re-swell
+      ]
+    } else { // 'normal'
+      layers = [
+        { delay: 0.0, rate: 1.0, gain: 0.28 }
+      ]
+    }
 
-    roarSrc.connect(roarGain).connect(c.destination)
-    roarSrc.start(t)
-    roarSrc.stop(t + 4.6)
+    // Play each layer
+    layers.forEach(layer => {
+      try {
+        const src = c.createBufferSource()
+        src.buffer = crowdState.roarBuffer
+        src.playbackRate.setValueAtTime(layer.rate, t)
+
+        const g = c.createGain()
+        g.gain.setValueAtTime(0, t + layer.delay)
+        g.gain.linearRampToValueAtTime(layer.gain, t + layer.delay + 0.15)
+        
+        // Decay envelope depends on type
+        let duration = 4.5
+        if (type === 'nine-darter') duration = 6.5
+        else if (type === 'win') duration = 8.0
+        
+        g.gain.setValueAtTime(layer.gain, t + layer.delay + duration * 0.3)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + layer.delay + duration)
+
+        src.connect(g).connect(c.destination)
+        src.start(t + layer.delay)
+        src.stop(t + layer.delay + duration + 0.1)
+      } catch (err) {
+        console.error("Failed to play crowd roar layer:", err)
+      }
+    })
 
     // Ensure the bed's masterGain is restored
     if (crowdState.masterGain) {

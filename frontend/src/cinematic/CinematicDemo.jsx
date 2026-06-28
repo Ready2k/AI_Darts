@@ -44,14 +44,15 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
   const replayDartRef = useRef(null)
   const busyRef = useRef(false)
 
-  const triggerCrowdRoar = () => {
-    crowd.roar()
+  const triggerCrowdRoar = (type = 'normal') => {
+    crowd.roar(type)
     clearTimeout(crowdReactTimer.current)
     setCrowdReact(false)
     setTimeout(() => {
       setCrowdReact(true)
     }, 0)
-    crowdReactTimer.current = setTimeout(() => setCrowdReact(false), 1200)
+    const duration = type === 'win' || type === 'nine-darter' ? 2500 : 1200
+    crowdReactTimer.current = setTimeout(() => setCrowdReact(false), duration)
   }
 
   const makeW = (token) => (ms) =>
@@ -207,7 +208,8 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
         await W(350)
         if (visit.gameShot) {
           // ── Finale ──
-          triggerCrowdRoar()
+          const isNineDarter = visit.call && /nine-dart|nine darts/i.test(visit.call)
+          triggerCrowdRoar(isNineDarter ? 'nine-darter' : 'win')
           // visit.call may be SSML or plain text — say() handles both
           sound.say(visit.call, { rate: 0.88, pitch: 1.0 })
           setBigCall({ text: 'GAME SHOT!', sub: `${pl.name.toUpperCase()} IS THE CHAMPION` })
@@ -222,7 +224,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           return
         }
         if (visit.big) {
-          triggerCrowdRoar()
+          triggerCrowdRoar('180')
           shake(2)
           setBigCall({ text: '180', sub: 'ONE HUNDRED AND EIGHTY!' })
           sound.say(visit.call, { rate: 0.82, pitch: 1.05 })  // visit.call may be SSML
@@ -234,7 +236,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           sound.say(visit.call, { rate: 0.98 })
           if (visit.total >= 100) {
             sound.cheer(false)
-            crowd.roar()
+            crowd.roar('normal')
           }
           await W(1600)
         }

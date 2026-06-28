@@ -569,7 +569,15 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     else if (x01 && total >= 100) { call = { text: String(total), sub: 'BIG SCORE' }; line = pickLine('visitTotal', { total }) }
 
     if (call) {
-      crowd.roar()   // crowd swells on every big moment (audio)
+      let roarType = 'normal'
+      if (feat && feat.text === 'NINE DARTER') {
+        roarType = 'nine-darter'
+      } else if (game.over) {
+        roarType = 'win'
+      } else if (x01 && total === 180) {
+        roarType = '180'
+      }
+      crowd.roar(roarType)   // crowd swells on every big moment (audio)
       // Visual partner: bounce the crowd silhouettes. Re-arm so back-to-back
       // big calls each retrigger the bounce. Deferred (setTimeout 0) to avoid a
       // synchronous setState inside the effect body.
