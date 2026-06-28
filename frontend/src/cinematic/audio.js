@@ -1,5 +1,9 @@
 // Demo sound design: WebAudio-synthesised dart thuds / whooshes / crowd swells,
 // plus SpeechSynthesis for the referee and MC. No audio assets needed.
+// Kokoro in-browser neural TTS is the primary speech backend when a kokoro:*
+// voice is selected; speechSynthesis is the fallback.
+
+import { KokoroTTS } from 'kokoro-js'
 
 let ctx = null
 let noiseBuf = null
@@ -182,16 +186,16 @@ export const crowd = {
         const ambient = crowdState.ambientSource
         const active = crowdState.activeSource
         setTimeout(() => {
-          try { ambient?.stop() } catch {}
-          try { active?.stop() } catch {}
+          try { ambient?.stop() } catch { /* already stopped */ }
+          try { active?.stop() } catch { /* already stopped */ }
         }, 350)
-      } catch {
-        try { crowdState.ambientSource?.stop() } catch {}
-        try { crowdState.activeSource?.stop() } catch {}
+      } catch { /* node already disconnected */
+        try { crowdState.ambientSource?.stop() } catch { /* already stopped */ }
+        try { crowdState.activeSource?.stop() } catch { /* already stopped */ }
       }
     } else {
-      try { crowdState.ambientSource?.stop() } catch {}
-      try { crowdState.activeSource?.stop() } catch {}
+      try { crowdState.ambientSource?.stop() } catch { /* already stopped */ }
+      try { crowdState.activeSource?.stop() } catch { /* already stopped */ }
     }
 
     crowdState.ambientSource = null
@@ -329,6 +333,11 @@ export function getAvailableVoices() {
 /** Persist a voice choice and immediately apply it */
 export function setSelectedVoice(voiceURI) {
   try { localStorage.setItem(VOICE_STORAGE_KEY, voiceURI) } catch { /* storage blocked */ }
+  if (voiceURI?.startsWith('kokoro:')) {
+    // Start downloading the model in the background if not already loaded
+    _initKokoro()
+    return
+  }
   const voices = window.speechSynthesis?.getVoices() || []
   cachedVoice = voices.find((v) => v.voiceURI === voiceURI) || cachedVoice
 }
@@ -336,6 +345,83 @@ export function setSelectedVoice(voiceURI) {
 /** Read the stored voice URI (may be null if never set) */
 export function getSelectedVoiceURI() {
   try { return localStorage.getItem(VOICE_STORAGE_KEY) } catch { return null }
+}
+
+// ── Kokoro neural TTS backend ────────────────────────────────────────────────
+const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+let _kokoroTTS = null
+let _kokoroLoading = false
+let _kokoroReady = false
+let _kokoroError = null
+let _kokoroProgressCb = null
+
+export const KOKORO_VOICES = [
+  { id: 'bm_george',   label: 'George (British Male)',     lang: 'en-GB' },
+  { id: 'bm_lewis',    label: 'Lewis (British Male)',      lang: 'en-GB' },
+  { id: 'bf_emma',     label: 'Emma (British Female)',     lang: 'en-GB' },
+  { id: 'bf_isabella', label: 'Isabella (British Female)', lang: 'en-GB' },
+  { id: 'am_michael',  label: 'Michael (US Male)',         lang: 'en-US' },
+  { id: 'af_heart',    label: 'Heart (US Female)',         lang: 'en-US' },
+]
+
+export function kokoroStatus() {
+  return { ready: _kokoroReady, loading: _kokoroLoading, error: _kokoroError }
+}
+
+export function setKokoroProgressCallback(cb) { _kokoroProgressCb = cb }
+
+async function _initKokoro() {
+  if (_kokoroReady || _kokoroLoading) return
+  _kokoroLoading = true
+  _kokoroError = null
+  try {
+    _kokoroTTS = await KokoroTTS.from_pretrained(KOKORO_MODEL, {
+      dtype: 'q8',
+      device: 'wasm',
+      progress_callback: (p) => {
+        const pct = typeof p === 'number' ? p : (p?.progress ?? 0)
+        _kokoroProgressCb?.(Math.round(pct))
+      },
+    })
+    _kokoroReady = true
+  } catch (e) {
+    _kokoroError = String(e)
+    console.error('Kokoro init failed:', e)
+  } finally {
+    _kokoroLoading = false
+  }
+}
+
+function _selectedKokoroVoiceId() {
+  const uri = getSelectedVoiceURI()
+  if (uri?.startsWith('kokoro:')) return uri.slice(7)
+  return 'bm_george'
+}
+
+function _isKokoroVoiceSelected() {
+  return getSelectedVoiceURI()?.startsWith('kokoro:') ?? false
+}
+
+async function _speakKokoro(item) {
+  if (item.drop && Date.now() - item.t > item.ttl) return
+  const voiceId = _selectedKokoroVoiceId()
+  const audio = await _kokoroTTS.generate(item.text, {
+    voice: voiceId,
+    speed: Math.max(0.5, Math.min(2, item.rate)),
+  })
+  const c = ac(); if (!c) return
+  const pcm = audio.audio ?? audio.data   // RawAudio uses .audio; guard for API changes
+  const buf = c.createBuffer(1, pcm.length, audio.sampling_rate)
+  buf.copyToChannel(pcm, 0)
+  const src = c.createBufferSource()
+  src.buffer = buf
+  const g = c.createGain()
+  g.gain.value = Math.min(1, Math.max(0, item.volume ?? 1))
+  src.connect(g).connect(c.destination)
+  await new Promise((resolve) => {
+    src.onended = resolve
+    src.start()
+  })
 }
 
 /**
@@ -514,6 +600,25 @@ function _clearSpeech() {
 }
 
 function _speakSegment(item) {
+  const done = () => {
+    if (_speaking) { _speaking = false; _drainSpeech() }
+  }
+
+  // ── Kokoro path ──────────────────────────────────────────────────────────
+  if (_isKokoroVoiceSelected() && _kokoroReady) {
+    _speaking = true
+    const doKokoro = () => {
+      _speakKokoro(item).then(done).catch(done)
+    }
+    if (item.delayBefore > 0) {
+      setTimeout(doKokoro, item.delayBefore)
+    } else {
+      doKokoro()
+    }
+    return
+  }
+
+  // ── WebSpeech fallback path ──────────────────────────────────────────────
   if (!window.speechSynthesis) return
   const doSpeak = () => {
     const u = new SpeechSynthesisUtterance(item.text)
@@ -525,14 +630,14 @@ function _speakSegment(item) {
     // Watchdog: some browsers drop `onend`, which would wedge the queue forever.
     const estMs = Math.min(12000, 700 + item.text.length * 75)
     let wd = null
-    const done = () => {
+    const wsDone = () => {
       if (wd) { clearTimeout(wd); wd = null }
-      if (_speaking) { _speaking = false; _drainSpeech() }
+      done()
     }
     _speaking = true
-    u.onend = done
-    u.onerror = done
-    wd = setTimeout(done, estMs + 1500)
+    u.onend = wsDone
+    u.onerror = wsDone
+    wd = setTimeout(wsDone, estMs + 1500)
     window.speechSynthesis.speak(u)
   }
   if (item.delayBefore > 0) {
@@ -543,7 +648,8 @@ function _speakSegment(item) {
 }
 
 function _drainSpeech() {
-  if (_speaking || !window.speechSynthesis) return
+  if (_speaking) return
+  if (!_isKokoroVoiceSelected() && !window.speechSynthesis) return
   const now = Date.now()
   // Skip droppable lines that have aged out — speaking them now would lag play.
   while (_speechQ.length && _speechQ[0].drop && now - _speechQ[0].t > _speechQ[0].ttl) {
@@ -783,7 +889,8 @@ export const sound = {
   // SSML <break> tags split the utterance into multiple chained queue items so
   // that pauses play correctly without blocking the queue between them.
   say(text, { rate = 0.98, pitch = 0.92, ttl = 3000, priority = false } = {}) {
-    if (!enabled || !window.speechSynthesis || !text) return
+    if (!enabled || !text) return
+    if (!_isKokoroVoiceSelected() && !window.speechSynthesis) return
     const segments = parseSSML(text)
     const now = Date.now()
     for (const seg of segments) {

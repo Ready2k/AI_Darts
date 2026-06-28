@@ -16,7 +16,7 @@ import { useThrowAnimation } from './hooks/useThrowAnimation'
 import { ThrowState } from './config/timing'
 import CinematicDemo from './cinematic/CinematicDemo'
 import CinematicGame from './cinematic/CinematicGame'
-import { unlockAudio, sound, getAvailableVoices, setSelectedVoice, getSelectedVoiceURI, onVoicesReady } from './cinematic/audio'
+import { unlockAudio, sound, getAvailableVoices, setSelectedVoice, getSelectedVoiceURI, onVoicesReady, KOKORO_VOICES, kokoroStatus, setKokoroProgressCallback } from './cinematic/audio'
 import { SCRIPTS } from './cinematic/scripts'
 import { getAvatar, NEMESIS_AVATAR_ID, NEMESIS_NAME } from './config/avatars'
 
@@ -48,7 +48,7 @@ function visitTotalToSpeech(total, { bust = false, legWon = false } = {}) {
       ? `<speak><prosody rate="slow" pitch="+3st">Game <break time="300ms"/> shot!</prosody> <emphasis level="strong">${cap}!</emphasis></speak>`
       : `<speak><prosody rate="slow" pitch="+3st">Game <break time="300ms"/> shot!</prosody> <prosody pitch="+2st">${cap}!</prosody></speak>`
   }
-  if (total === 180) return `<speak><prosody rate="fast" pitch="+3st">One hundred <break time="100ms"/> and eighty!</prosody></speak>`
+  if (total === 180) return `<speak><prosody rate="fast" pitch="+3st">One hundred and eighty!</prosody></speak>`
   return `<speak><prosody pitch="+1st">${cap}.</prosody></speak>`
 }
 
@@ -1065,79 +1065,189 @@ function CinematicToggle({ on, onChange, disabled = false }) {
 }
 
 // ── Voice picker (Settings) ──────────────────────────────────────────────────
-// Lets the user choose which TTS voice the MC uses. Populated once voices have
-// loaded (Chrome loads them async). Persisted in localStorage.
+// Two sections: Kokoro neural voices (recommended) and system WebSpeech voices.
+// Kokoro voices are identified by a "kokoro:" prefix on the URI.
 function VoicePicker() {
-  const [voices, setVoices] = useState([])
+  const [systemVoices, setSystemVoices] = useState([])
   const [selected, setSelected] = useState(() => getSelectedVoiceURI() || '')
   const [testing, setTesting] = useState(false)
+  const [systemExpanded, setSystemExpanded] = useState(false)
+  const [kokoroPct, setKokoroPct] = useState(0)
+  const [kokoroSt, setKokoroSt] = useState(() => kokoroStatus())
 
   useEffect(() => {
     onVoicesReady(() => {
-      setVoices(getAvailableVoices())
-      // Refresh selected to whatever is currently stored (may have been set by
-      // selectBestVoice on first load).
+      setSystemVoices(getAvailableVoices())
       setSelected(getSelectedVoiceURI() || '')
     })
   }, [])
 
-  const handleChange = (e) => {
+  // Poll Kokoro status while loading
+  useEffect(() => {
+    const st = kokoroStatus()
+    if (!st.loading) return
+    const id = setInterval(() => {
+      const s = kokoroStatus()
+      setKokoroSt({ ...s })
+      if (!s.loading) clearInterval(id)
+    }, 200)
+    setKokoroProgressCallback((pct) => setKokoroPct(pct))
+    return () => { clearInterval(id); setKokoroProgressCallback(null) }
+  }, [kokoroSt.loading])
+
+  const selectKokoro = (voiceId) => {
+    const uri = `kokoro:${voiceId}`
+    setSelected(uri)
+    setSelectedVoice(uri)
+    // Start polling status once init is triggered
+    setKokoroSt(kokoroStatus())
+    setKokoroProgressCallback((pct) => setKokoroPct(pct))
+  }
+
+  const selectSystem = (e) => {
     const uri = e.target.value
     setSelected(uri)
     setSelectedVoice(uri)
   }
 
+  const retryKokoro = () => {
+    // Reset error state and re-trigger init via setSelectedVoice
+    const uri = selected.startsWith('kokoro:') ? selected : `kokoro:bm_george`
+    setSelected(uri)
+    setSelectedVoice(uri)
+    setKokoroSt(kokoroStatus())
+  }
+
   const testVoice = () => {
     if (testing) return
     setTesting(true)
-    sound.say('<speak>One hundred <break time="200ms"/> and eighty!</speak>', { priority: true })
-    setTimeout(() => setTesting(false), 3000)
+    sound.say('<speak><prosody rate="fast" pitch="+3st">One hundred and eighty!</prosody></speak>', { priority: true })
+    setTimeout(() => setTesting(false), 3500)
   }
 
-  if (!voices.length) return null
-
-  // Group: en-GB first, then other en-*
-  const gbVoices = voices.filter((v) => v.lang === 'en-GB')
-  const otherVoices = voices.filter((v) => v.lang !== 'en-GB')
+  const gbVoices = systemVoices.filter((v) => v.lang === 'en-GB')
+  const otherVoices = systemVoices.filter((v) => v.lang !== 'en-GB')
+  const kStatus = kokoroSt
 
   return (
-    <div className="max-w-xl w-full mx-auto px-8 pt-5 pb-6 border-b border-white/10 space-y-3">
+    <div className="max-w-xl w-full mx-auto px-8 pt-5 pb-6 border-b border-white/10 space-y-4">
       <label className="text-xs uppercase tracking-widest text-white/40">MC Voice</label>
-      <div className="flex gap-2 items-stretch">
-        <select
-          value={selected}
-          onChange={handleChange}
-          className="flex-1 px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm text-white/90 appearance-none cursor-pointer"
-        >
-          {!selected && <option value="">Auto (recommended)</option>}
-          {gbVoices.length > 0 && (
-            <optgroup label="English (UK)">
-              {gbVoices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name}{v.localService ? '' : ' ·'}
-                </option>
-              ))}
-            </optgroup>
+
+      {/* ── Kokoro section ── */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-white/80">Neural voices (Kokoro)</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-semibold uppercase tracking-wide">recommended</span>
+        </div>
+
+        {/* Progress bar while downloading */}
+        {kStatus.loading && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-[11px] text-white/40">
+              <span>Downloading model (~11 MB)…</span>
+              <span>{kokoroPct}%</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-cyan-400 transition-all"
+                style={{ width: `${kokoroPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {kStatus.error && !kStatus.loading && (
+          <div className="flex items-center gap-2 text-[11px] text-red-400">
+            <span>Failed to load — using system voice. ({kStatus.error})</span>
+            <button
+              onClick={retryKokoro}
+              className="underline hover:text-red-300 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2">
+          {KOKORO_VOICES.map((v) => {
+            const uri = `kokoro:${v.id}`
+            const isSelected = selected === uri
+            return (
+              <button
+                key={v.id}
+                onClick={() => selectKokoro(v.id)}
+                className={`flex items-start justify-between px-3 py-2.5 rounded-xl border text-left transition-all ${
+                  isSelected
+                    ? 'border-cyan-400/70 bg-cyan-500/15 text-white'
+                    : 'border-white/10 bg-black/30 text-white/70 hover:bg-white/5 hover:border-white/20'
+                }`}
+              >
+                <span className="text-sm font-medium leading-tight">{v.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ml-2 shrink-0 font-mono ${
+                  v.lang === 'en-GB'
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'bg-blue-500/20 text-blue-300'
+                }`}>
+                  {v.lang === 'en-GB' ? 'UK' : 'US'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── System voices section (collapsible) ── */}
+      {systemVoices.length > 0 && (
+        <div className="space-y-2">
+          <button
+            onClick={() => setSystemExpanded((x) => !x)}
+            className="flex items-center gap-2 text-sm text-white/50 hover:text-white/70 transition-colors"
+          >
+            <span>System voices</span>
+            <span className={`transition-transform ${systemExpanded ? 'rotate-180' : ''}`}>▾</span>
+          </button>
+          {systemExpanded && (
+            <select
+              value={selected.startsWith('kokoro:') ? '' : selected}
+              onChange={selectSystem}
+              className="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm text-white/90 appearance-none cursor-pointer"
+            >
+              {(!selected || selected.startsWith('kokoro:')) && <option value="">Auto (recommended)</option>}
+              {gbVoices.length > 0 && (
+                <optgroup label="English (UK)">
+                  {gbVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name}{v.localService ? '' : ' ·'}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {otherVoices.length > 0 && (
+                <optgroup label="English (other)">
+                  {otherVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name} ({v.lang}){v.localService ? '' : ' ·'}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
           )}
-          {otherVoices.length > 0 && (
-            <optgroup label="English (other)">
-              {otherVoices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name} ({v.lang}){v.localService ? '' : ' ·'}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
+        </div>
+      )}
+
+      {/* ── Test button ── */}
+      <div className="flex items-center gap-3">
         <button
           onClick={testVoice}
           disabled={testing}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-sm font-semibold hover:bg-cyan-500/30 disabled:opacity-50 transition-colors shrink-0"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-sm font-semibold hover:bg-cyan-500/30 disabled:opacity-50 transition-colors"
         >
           {testing ? 'Speaking…' : 'Test voice'}
         </button>
+        <p className="text-[11px] text-white/30">· = cloud voice (requires internet).</p>
       </div>
-      <p className="text-[11px] text-white/30">· = cloud voice (requires internet). en-GB voices sound most authentic for darts.</p>
     </div>
   )
 }

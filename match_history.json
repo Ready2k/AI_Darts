@@ -452,5 +452,70 @@
         "checkout_pct": 0.0
       }
     ]
+  },
+  {
+    "ts": "2026-06-28 12:44",
+    "mode": "Killer",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "The Machine",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 15,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      },
+      {
+        "name": "Bob",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 15,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      },
+      {
+        "name": "Dave",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 9,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      },
+      {
+        "name": "The Machine",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 15,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-28 12:49",
+    "mode": "X01",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": true,
+    "winner": "James",
+    "players": [
+      {
+        "name": "James",
+        "sets": 1,
+        "legs": 0,
+        "avg": 33.4,
+        "darts": 27,
+        "maxima": 0,
+        "checkout_pct": 20.0
+      }
+    ]
   }
 ]

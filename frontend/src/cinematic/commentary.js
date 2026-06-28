@@ -15,20 +15,21 @@ const fill = (tpl, ctx) =>
 
 // Each event → an array of templates. {name} etc. are filled from ctx.
 const LINES = {
-  // Turn handover — punchy, MC-style, variety of openers.
+  // Turn handover — punchy, MC-style, variety of openers. No breaks: these fire
+  // every visit, so dead air here drags the whole match.
   turnIntro: [
-    '<speak><break time="150ms"/><emphasis level="strong">{name}</emphasis> needs <prosody rate="slow" pitch="-1st">{need}</prosody>.</speak>',
+    '<speak><emphasis level="strong">{name}</emphasis> needs <prosody pitch="-1st">{need}</prosody>.</speak>',
     '<speak>Up steps <prosody pitch="+1st">{name}</prosody>.</speak>',
     '<speak><prosody rate="fast">{name}</prosody> to the oche!</speak>',
     '<speak>Here comes <emphasis level="strong">{name}</emphasis>.</speak>',
     '<speak>Over to <prosody pitch="+1st">{name}</prosody>.</speak>',
     '<speak>It\'s <emphasis level="moderate">{name}</emphasis>\'s turn.</speak>',
   ],
-  // A big visit total (X01). ctx.total is the visit score.
+  // A big visit total (X01). ctx.total is the visit score — keep it snappy.
   visitTotal: [
     '<speak><prosody rate="fast" pitch="+1st">Get in there!</prosody> <emphasis level="strong">{total}!</emphasis></speak>',
     '<speak>Lovely darts! <prosody pitch="+1st">{total}!</prosody></speak>',
-    '<speak>What a visit — <prosody rate="slow" pitch="+2st">{total}!</prosody></speak>',
+    '<speak>What a visit — <prosody pitch="+2st">{total}!</prosody></speak>',
     '<speak>Oh, <prosody pitch="+1st">that\'s class!</prosody> <emphasis level="strong">{total}!</emphasis></speak>',
     '<speak><prosody rate="fast">Big score</prosody> — <prosody pitch="+2st">{total}!</prosody></speak>',
   ],

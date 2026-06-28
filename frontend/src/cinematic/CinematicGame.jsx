@@ -508,7 +508,10 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
 
     const disp = game.display_turn || []
     const visitOver = (game.turn?.length ?? 0) === 0 && disp.length > 0
-    if (!visitOver) return
+    // On a match win the backend doesn't reset turn (no _start_new_leg call),
+    // so turn is still populated with the winning darts → visitOver is false.
+    // Always proceed when game.over so the game-shot call & roar fire.
+    if (!visitOver && !game.over) return
 
     // Checkout miss: the player was on a finish before this visit completed but
     // the visit ended without winning. Fire the disappointed caller.
