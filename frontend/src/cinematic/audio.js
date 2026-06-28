@@ -389,37 +389,64 @@ export const crowd = {
     }
 
     notes.forEach(n => {
-      const numVoices = 8
+      const numVoices = 6
       const noteGain = c.createGain()
       
-      // Increased gain from 0.035 to 0.09 for much better audibility
+      // Lowered gain to 0.022 per voice for a softer, more distant blend
       noteGain.gain.setValueAtTime(0, t + n.time)
-      noteGain.gain.linearRampToValueAtTime(0.09, t + n.time + 0.06)
-      noteGain.gain.setValueAtTime(0.09, t + n.time + n.dur - 0.06)
+      noteGain.gain.linearRampToValueAtTime(0.022, t + n.time + 0.08)
+      noteGain.gain.setValueAtTime(0.022, t + n.time + n.dur - 0.08)
       noteGain.gain.linearRampToValueAtTime(0.0001, t + n.time + n.dur)
 
-      // Warm lowpass filter to simulate crowd room acoustics
-      const lp = c.createBiquadFilter()
-      lp.type = 'lowpass'
-      lp.frequency.setValueAtTime(1100, t + n.time)
+      // Parallel formant filters (F1 ~600Hz, F2 ~1000Hz) to create a human "ah/oh" vowel
+      const bp1 = c.createBiquadFilter()
+      bp1.type = 'bandpass'
+      bp1.frequency.setValueAtTime(600, t + n.time)
+      bp1.Q.setValueAtTime(3.5, t + n.time)
 
-      // Highpass filter to remove low-end muddiness
-      const hp = c.createBiquadFilter()
-      hp.type = 'highpass'
-      hp.frequency.setValueAtTime(150, t + n.time)
+      const bp2 = c.createBiquadFilter()
+      bp2.type = 'bandpass'
+      bp2.frequency.setValueAtTime(1000, t + n.time)
+      bp2.Q.setValueAtTime(3.5, t + n.time)
+
+      // Add filtered white noise for breathiness/crowd whispering texture
+      let ns = null
+      try {
+        ns = noise(c)
+        const noiseGain = c.createGain()
+        noiseGain.gain.setValueAtTime(0.005, t + n.time)
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + n.time + n.dur)
+        
+        const noiseFilter = c.createBiquadFilter()
+        noiseFilter.type = 'bandpass'
+        noiseFilter.frequency.setValueAtTime(800, t + n.time)
+        noiseFilter.Q.setValueAtTime(1.5, t + n.time)
+        
+        ns.connect(noiseFilter).connect(noiseGain).connect(noteGain)
+        ns.start(t + n.time)
+        ns.stop(t + n.time + n.dur)
+      } catch (e) {
+        // Fallback if noise buffer fails
+      }
 
       const oscillators = []
       for (let v = 0; v < numVoices; v++) {
         const osc = c.createOscillator()
-        osc.type = 'sawtooth'
-        const detune = (Math.random() - 0.5) * 55 // slightly wider detune
+        // Use triangle waves (softer, less brassy than sawtooth)
+        osc.type = 'triangle'
+        const detune = (Math.random() - 0.5) * 60 // wide detune for chorus
         osc.frequency.setValueAtTime(n.freq, t + n.time)
         osc.detune.setValueAtTime(detune, t + n.time)
-        osc.connect(lp)
+        
+        osc.connect(bp1)
+        osc.connect(bp2)
         oscillators.push(osc)
       }
 
-      lp.connect(hp).connect(noteGain).connect(c.destination)
+      bp1.connect(noteGain)
+      bp2.connect(noteGain)
+      
+      noteGain.connect(c.destination)
       
       oscillators.forEach(osc => {
         osc.start(t + n.time)
