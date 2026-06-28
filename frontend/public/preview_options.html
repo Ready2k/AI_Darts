@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Darts Crowd Sound Previews</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --primary: #38bdf8;
+      --primary-hover: #7dd3fc;
+      --accent: #f43f5e;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    body {
+      margin: 0;
+      padding: 40px 20px;
+      font-family: 'Outfit', sans-serif;
+      background: radial-gradient(circle at top, #1e293b, #0f172a);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 100%;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2.5rem;
+      font-weight: 800;
+      margin: 0 0 10px 0;
+      background: linear-gradient(to right, #38bdf8, #f43f5e);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin: 0;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 24px;
+      padding: 30px;
+      margin-bottom: 30px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .card:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .card-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--primary);
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge.accent {
+      background: rgba(244, 63, 94, 0.2);
+      color: var(--accent);
+    }
+
+    .badge.green {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+    }
+
+    .card-description {
+      color: var(--text-muted);
+      font-size: 1rem;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      background: linear-gradient(135deg, var(--primary), #0284c7);
+      color: #0f172a;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 14px;
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      transition: transform 0.1s, box-shadow 0.2s;
+      box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.5);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn.stop {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      color: white;
+      box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+    }
+
+    .btn.stop:hover {
+      box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+    }
+
+    .audio-status {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #22c55e;
+      border-radius: 50%;
+      display: inline-block;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.8); opacity: 0.5; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.8); opacity: 0.5; }
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Darts Crowd Sound Previews</h1>
+      <p class="subtitle">Interactive Web Audio demonstrations of the proposed crowd options</p>
+    </header>
+
+    <!-- Option 2 Card (Real Audio Chant) -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Option 2: Real Audio Chant (Nine Dart Looped End)</h2>
+        <span class="badge green">Real Audio Loop</span>
+      </div>
+      <p class="card-description">
+        Plays the real crowd chant audio file (<code>Nine_Dart_Looped_End.mp3</code>) copied from your Downloads. This preview is configured to <strong>loop exactly twice</strong> before stopping automatically, demonstrating how it sounds as a sustained celebration.
+      </p>
+      <button class="btn" id="play-opt2" onclick="toggleOption2()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        Play Real Audio Loop
+      </button>
+      <div class="audio-status" id="status-opt2" style="display: none;">
+        <span class="pulse-dot"></span> Playing Option 2 (Looped 2x)
+      </div>
+    </div>
+
+    <!-- Option 1 Card -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Option 1: Stadium PA Synth + Real Crowd Roar</h2>
+        <span class="badge">PA Speaker Effect</span>
+      </div>
+      <p class="card-description">
+        Simulates a real darts arena where the DJ plays the iconic <strong>"Chase the Sun"</strong> synth hook over the overhead speakers (using a retro organ synthesizer with stadium reverb), while the real crowd roar audio plays and swells underneath.
+      </p>
+      <button class="btn" id="play-opt1" onclick="toggleOption1()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        Play PA + Crowd
+      </button>
+      <div class="audio-status" id="status-opt1" style="display: none;">
+        <span class="pulse-dot"></span> Playing Option 1 (Stadium PA + Crowd)
+      </div>
+    </div>
+
+    <!-- Option 3 Card -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Option 3: Rhythmic Clapping & "Oi! Oi! Oi!" Chants</h2>
+        <span class="badge accent">Synthesized</span>
+      </div>
+      <p class="card-description">
+        Replaces musical melodies with rhythmic crowd noise. Uses synthesized bandpass-filtered noise bursts to play the classic <strong>"Clap-clap, clap-clap-clap, clap-clap-clap-clap, DARTS!"</strong> pattern, followed by the crowd shouting "Oi! Oi! Oi!".
+      </p>
+      <button class="btn" id="play-opt3" onclick="toggleOption3()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        Play Clapping & Shouts
+      </button>
+      <div class="audio-status" id="status-opt3" style="display: none;">
+        <span class="pulse-dot"></span> Playing Option 3 (Rhythmic Claps & Shouts)
+      </div>
+    </div>
+
+    <div class="footer">
+      Open this page at <a href="http://localhost:5173/preview_options.html" style="color: var(--primary); text-decoration: none;" target="_blank">http://localhost:5173/preview_options.html</a> while your Vite dev server is running.
+    </div>
+  </div>
+
+  <script>
+    let audioCtx = null;
+    let roarBuffer = null;
+    let chantBuffer = null;
+    let currentOption = 0; // 0 = none, 1 = option 1, 2 = option 2, 3 = option 3
+    let activeNodes = [];
+    let activeTimers = [];
+
+    function getAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    // Pre-load the real crowd roar from the public folder
+    async function loadRoar() {
+      const ctx = getAudioContext();
+      if (roarBuffer) return roarBuffer;
+      try {
+        const response = await fetch('/crowd-roar.mp3?v=2');
+        const arrayBuffer = await response.arrayBuffer();
+        roarBuffer = await ctx.decodeAudioData(arrayBuffer);
+        return roarBuffer;
+      } catch (err) {
+        console.error("Could not load /crowd-roar.mp3. Make sure the server is running.", err);
+        return null;
+      }
+    }
+
+    // Pre-load the user's Nine Dart Looped End MP3
+    async function loadChant() {
+      const ctx = getAudioContext();
+      if (chantBuffer) return chantBuffer;
+      try {
+        const response = await fetch('/Nine_Dart_Looped_End.mp3');
+        const arrayBuffer = await response.arrayBuffer();
+        chantBuffer = await ctx.decodeAudioData(arrayBuffer);
+        return chantBuffer;
+      } catch (err) {
+        console.error("Could not load /Nine_Dart_Looped_End.mp3", err);
+        return null;
+      }
+    }
+
+    function stopAll() {
+      activeNodes.forEach(node => {
+        try { node.stop(); } catch(e) {}
+      });
+      activeNodes = [];
+      activeTimers.forEach(clearTimeout);
+      activeTimers = [];
+      
+      document.getElementById('play-opt1').innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Play PA + Crowd';
+      document.getElementById('play-opt1').className = 'btn';
+      document.getElementById('status-opt1').style.display = 'none';
+
+      document.getElementById('play-opt2').innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Play Real Audio Loop';
+      document.getElementById('play-opt2').className = 'btn';
+      document.getElementById('status-opt2').style.display = 'none';
+
+      document.getElementById('play-opt3').innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Play Clapping & Shouts';
+      document.getElementById('play-opt3').className = 'btn';
+      document.getElementById('status-opt3').style.display = 'none';
+      
+      currentOption = 0;
+    }
+
+    // ─── OPTION 2: REAL AUDIO CHANT LOOP ───────────────────────────────────
+    async function toggleOption2() {
+      if (currentOption === 2) {
+        stopAll();
+        return;
+      }
+      stopAll();
+      currentOption = 2;
+
+      const btn = document.getElementById('play-opt2');
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16"></rect></svg> Stop Preview';
+      btn.className = 'btn stop';
+      document.getElementById('status-opt2').style.display = 'flex';
+
+      const ctx = getAudioContext();
+      const t = ctx.currentTime;
+
+      const buffer = await loadChant();
+      if (!buffer) {
+        alert("Failed to load Nine_Dart_Looped_End.mp3. Make sure it was copied to frontend/public/");
+        stopAll();
+        return;
+      }
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+
+      const gainNode = ctx.createGain();
+      // Set to a comfortable listening volume
+      gainNode.gain.setValueAtTime(0.35, t);
+
+      source.connect(gainNode).connect(ctx.destination);
+      source.start(t);
+      activeNodes.push(source);
+
+      // Loop exactly twice before stopping
+      const duration = buffer.duration * 2;
+      const timer = setTimeout(stopAll, duration * 1000);
+      activeTimers.push(timer);
+    }
+
+    // ─── OPTION 1: STADIUM PA SYNTH + REAL CROWD ───────────────────────────
+    async function toggleOption1() {
+      if (currentOption === 1) {
+        stopAll();
+        return;
+      }
+      stopAll();
+      currentOption = 1;
+      
+      const btn = document.getElementById('play-opt1');
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16"></rect></svg> Stop Preview';
+      btn.className = 'btn stop';
+      document.getElementById('status-opt1').style.display = 'flex';
+
+      const ctx = getAudioContext();
+      const t = ctx.currentTime;
+
+      // 1. Play the real crowd roar underneath
+      const buffer = await loadRoar();
+      if (buffer) {
+        const roarSrc = ctx.createBufferSource();
+        roarSrc.buffer = buffer;
+        
+        const roarGain = ctx.createGain();
+        roarGain.gain.setValueAtTime(0, t);
+        roarGain.gain.linearRampToValueAtTime(0.3, t + 0.5);
+        roarGain.gain.exponentialRampToValueAtTime(0.0001, t + 8.0);
+        
+        roarSrc.connect(roarGain).connect(ctx.destination);
+        roarSrc.start(t);
+        activeNodes.push(roarSrc);
+      }
+
+      // 2. Play the synthesized Stadium PA "Chase the Sun" Hook
+      // We'll create a retro organ synth sound: a mix of triangle and square waves with a lowpass filter
+      const melody = [
+        { f: 440.00, d: 2, t: 0 },    // A4
+        { f: 440.00, d: 1, t: 2 },    // A4
+        { f: 523.25, d: 1, t: 3 },    // C5
+        { f: 493.88, d: 2, t: 4 },    // B4
+        { f: 392.00, d: 2, t: 6 },    // G4
+        { f: 440.00, d: 2, t: 8 },    // A4
+        { f: 440.00, d: 1, t: 10 },   // A4
+        { f: 523.25, d: 1, t: 11 },   // C5
+        { f: 493.88, d: 2, t: 12 },   // B4
+        { f: 392.00, d: 2, t: 14 },   // G4
+        // Chorus surge
+        { f: 440.00, d: 4, t: 16 },   // A4
+        { f: 523.25, d: 4, t: 20 },   // C5
+        { f: 392.00, d: 4, t: 24 },   // G4
+        { f: 329.63, d: 6, t: 28 }    // E4
+      ];
+      
+      const step = 0.22; // tempo
+      
+      // Delay effect to simulate stadium acoustics
+      const delay = ctx.createDelay();
+      delay.delayTime.setValueAtTime(0.3, t);
+      
+      const delayFeedback = ctx.createGain();
+      delayFeedback.gain.setValueAtTime(0.35, t);
+      
+      delay.connect(delayFeedback);
+      delayFeedback.connect(delay);
+      
+      const synthMasterGain = ctx.createGain();
+      // Lower volume for PA music so it sits nicely in the mix
+      synthMasterGain.gain.setValueAtTime(0.08, t); 
+      
+      synthMasterGain.connect(ctx.destination);
+      synthMasterGain.connect(delay);
+      delay.connect(ctx.destination);
+
+      melody.forEach(note => {
+        const noteStart = t + note.t * step;
+        const noteDur = note.d * step;
+        
+        // Osc 1: Square wave for that organ bite
+        const osc1 = ctx.createOscillator();
+        osc1.type = 'square';
+        osc1.frequency.setValueAtTime(note.f, noteStart);
+        
+        // Osc 2: Triangle wave to add warmth
+        const osc2 = ctx.createOscillator();
+        osc2.type = 'triangle';
+        osc2.frequency.setValueAtTime(note.f * 0.5, noteStart); // sub-octave
+        
+        const noteGain = ctx.createGain();
+        noteGain.gain.setValueAtTime(0, noteStart);
+        noteGain.gain.linearRampToValueAtTime(0.25, noteStart + 0.03); // punchy PA attack
+        noteGain.gain.setValueAtTime(0.25, noteStart + noteDur - 0.04);
+        noteGain.gain.linearRampToValueAtTime(0.0001, noteStart + noteDur);
+        
+        // PA bandpass filter to sound like stadium horns / speakers
+        const speakerFilter = ctx.createBiquadFilter();
+        speakerFilter.type = 'bandpass';
+        speakerFilter.frequency.setValueAtTime(1000, noteStart);
+        speakerFilter.Q.setValueAtTime(1.2, noteStart);
+        
+        osc1.connect(noteGain);
+        osc2.connect(noteGain);
+        noteGain.connect(speakerFilter).connect(synthMasterGain);
+        
+        osc1.start(noteStart);
+        osc1.stop(noteStart + noteDur);
+        osc2.start(noteStart);
+        osc2.stop(noteStart + noteDur);
+        
+        activeNodes.push(osc1, osc2);
+      });
+
+      // Auto stop UI when melody finishes
+      const totalDuration = (28 + 6) * step;
+      const timer = setTimeout(stopAll, totalDuration * 1000);
+      activeTimers.push(timer);
+    }
+
+    // ─── OPTION 3: RHYTHMIC CLAPPING & SHOUTS ───────────────────────────────
+    function toggleOption3() {
+      if (currentOption === 3) {
+        stopAll();
+        return;
+      }
+      stopAll();
+      currentOption = 3;
+
+      const btn = document.getElementById('play-opt3');
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16"></rect></svg> Stop Preview';
+      btn.className = 'btn stop';
+      document.getElementById('status-opt3').style.display = 'flex';
+
+      const ctx = getAudioContext();
+      const t = ctx.currentTime;
+
+      // Noise buffer for claps and shouts
+      const bufferSize = ctx.sampleRate * 2;
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+      function triggerClap(time) {
+        const noiseSrc = ctx.createBufferSource();
+        noiseSrc.buffer = noiseBuffer;
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1000, time);
+        filter.Q.setValueAtTime(2.0, time);
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.12, time + 0.005); // sharp clap
+        gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.05); // fast decay
+
+        noiseSrc.connect(filter).connect(gain).connect(ctx.destination);
+        noiseSrc.start(time);
+        activeNodes.push(noiseSrc);
+      }
+
+      function triggerShout(time, text = 'oi') {
+        const noiseSrc = ctx.createBufferSource();
+        noiseSrc.buffer = noiseBuffer;
+
+        // Bandpass sweeps for vocal tract simulation
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0, time);
+
+        if (text === 'oi') {
+          // "Oi!" sweeps filter down
+          filter.frequency.setValueAtTime(800, time);
+          filter.frequency.exponentialRampToValueAtTime(400, time + 0.18);
+          filter.Q.setValueAtTime(2.5, time);
+          
+          gain.gain.linearRampToValueAtTime(0.15, time + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.22);
+        } else {
+          // "Darts!" shout - wider, longer
+          filter.frequency.setValueAtTime(700, time);
+          filter.frequency.exponentialRampToValueAtTime(350, time + 0.3);
+          filter.Q.setValueAtTime(1.5, time);
+          
+          gain.gain.linearRampToValueAtTime(0.2, time + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.4);
+        }
+
+        noiseSrc.connect(filter).connect(gain).connect(ctx.destination);
+        noiseSrc.start(time);
+        activeNodes.push(noiseSrc);
+      }
+
+      // Clap-clap, clap-clap-clap, clap-clap-clap-clap... DARTS!
+      const pattern = [
+        // clap clap
+        { type: 'clap', t: 0.0 },
+        { type: 'clap', t: 0.25 },
+        // clap clap clap
+        { type: 'clap', t: 0.75 },
+        { type: 'clap', t: 1.0 },
+        { type: 'clap', t: 1.25 },
+        // clap clap clap clap
+        { type: 'clap', t: 1.75 },
+        { type: 'clap', t: 2.0 },
+        { type: 'clap', t: 2.25 },
+        { type: 'clap', t: 2.5 },
+        // DARTS!
+        { type: 'shout-darts', t: 3.0 },
+        // Oi! Oi! Oi!
+        { type: 'shout-oi', t: 4.2 },
+        { type: 'shout-oi', t: 4.6 },
+        { type: 'shout-oi', t: 5.0 }
+      ];
+
+      pattern.forEach(p => {
+        if (p.type === 'clap') {
+          triggerClap(t + p.t);
+        } else if (p.type === 'shout-oi') {
+          triggerShout(t + p.t, 'oi');
+        } else if (p.type === 'shout-darts') {
+          triggerShout(t + p.t, 'darts');
+        }
+      });
+
+      const timer = setTimeout(stopAll, 6000);
+      activeTimers.push(timer);
+    }
+  </script>
+</body>
+</html>

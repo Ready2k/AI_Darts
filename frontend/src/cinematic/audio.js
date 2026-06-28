@@ -49,6 +49,7 @@ const crowdState = {
   ambientBuffer: null,
   activeBuffer: null,
   roarBuffer: null,
+  chantBuffer: null,
 }
 
 let _clinkInterval = null
@@ -89,19 +90,21 @@ async function loadCrowdBuffers() {
     console.warn("Crowd: AudioContext not available yet.")
     return
   }
-  if (crowdState.ambientBuffer && crowdState.activeBuffer && crowdState.roarBuffer) return
+  if (crowdState.ambientBuffer && crowdState.activeBuffer && crowdState.roarBuffer && crowdState.chantBuffer) return
 
   console.log("Crowd: Starting to load audio buffers...")
-  const [ambient, active, roar] = await Promise.all([
+  const [ambient, active, roar, chant] = await Promise.all([
     fetchAudioBuffer('/crowd-ambient.mp3?v=2'),
     fetchAudioBuffer('/crowd-active.mp3?v=2'),
-    fetchAudioBuffer('/crowd-roar.mp3?v=2')
+    fetchAudioBuffer('/crowd-roar.mp3?v=2'),
+    fetchAudioBuffer('/Nine_Dart_Looped_End.mp3?v=2')
   ])
 
   crowdState.ambientBuffer = ambient
   crowdState.activeBuffer = active
   crowdState.roarBuffer = roar
-  console.log("Crowd: Buffers loaded. Ambient:", !!ambient, "Active:", !!active, "Roar:", !!roar)
+  crowdState.chantBuffer = chant
+  console.log("Crowd: Buffers loaded. Ambient:", !!ambient, "Active:", !!active, "Roar:", !!roar, "Chant:", !!chant)
 }
 
 async function fetchAudioBuffer(url) {
@@ -353,106 +356,45 @@ export const crowd = {
     const c = ac(); if (!c) return
     const t = c.currentTime
 
-    let notes = []
-    if (type === 'chase-the-sun') {
-      const step = 0.22 // eighth note duration (~136 BPM)
-      const melody = [
-        { f: 440.00, d: 2, t: 0 },    // A4
-        { f: 440.00, d: 1, t: 2 },    // A4
-        { f: 523.25, d: 1, t: 3 },    // C5
-        { f: 493.88, d: 2, t: 4 },    // B4
-        { f: 392.00, d: 2, t: 6 },    // G4
-        { f: 440.00, d: 2, t: 8 },    // A4
-        { f: 440.00, d: 1, t: 10 },   // A4
-        { f: 523.25, d: 1, t: 11 },   // C5
-        { f: 493.88, d: 2, t: 12 },   // B4
-        { f: 392.00, d: 2, t: 14 },   // G4
-        // Chorus surge
-        { f: 440.00, d: 4, t: 16 },   // A4
-        { f: 523.25, d: 4, t: 20 },   // C5
-        { f: 392.00, d: 4, t: 24 },   // G4
-        { f: 329.63, d: 6, t: 28 }    // E4
-      ]
-      notes = melody.map(n => ({ freq: n.f, dur: n.d * step, time: n.t * step }))
-    } else if (type === 'stand-up') {
-      const step = 0.4
-      const melody = [
-        { f: 392.00, d: 2.2, t: 0 },   // G4 "Stand"
-        { f: 392.00, d: 1.0, t: 2.2 }, // G4 "up"
-        { f: 329.63, d: 1.0, t: 3.2 }, // E4 "if"
-        { f: 349.23, d: 1.0, t: 4.2 }, // F4 "you"
-        { f: 392.00, d: 1.0, t: 5.2 }, // G4 "love"
-        { f: 440.00, d: 2.2, t: 6.2 }, // A4 "the"
-        { f: 392.00, d: 3.5, t: 8.4 }  // G4 "darts!"
-      ]
-      notes = melody.map(n => ({ freq: n.f, dur: n.d * step, time: n.t * step }))
+    if (!crowdState.chantBuffer) {
+      console.warn("Crowd: chantBuffer not loaded yet.")
+      return
     }
 
-    notes.forEach(n => {
-      const numVoices = 6
-      const noteGain = c.createGain()
-      
-      // Lowered gain to 0.022 per voice for a softer, more distant blend
-      noteGain.gain.setValueAtTime(0, t + n.time)
-      noteGain.gain.linearRampToValueAtTime(0.022, t + n.time + 0.08)
-      noteGain.gain.setValueAtTime(0.022, t + n.time + n.dur - 0.08)
-      noteGain.gain.linearRampToValueAtTime(0.0001, t + n.time + n.dur)
+    try {
+      const src = c.createBufferSource()
+      src.buffer = crowdState.chantBuffer
 
-      // Parallel formant filters (F1 ~600Hz, F2 ~1000Hz) to create a human "ah/oh" vowel
-      const bp1 = c.createBiquadFilter()
-      bp1.type = 'bandpass'
-      bp1.frequency.setValueAtTime(600, t + n.time)
-      bp1.Q.setValueAtTime(3.5, t + n.time)
+      const gainNode = c.createGain()
+      // Adjust volume to blend naturally into the background
+      gainNode.gain.setValueAtTime(0, t)
+      gainNode.gain.linearRampToValueAtTime(0.35, t + 0.4)
 
-      const bp2 = c.createBiquadFilter()
-      bp2.type = 'bandpass'
-      bp2.frequency.setValueAtTime(1000, t + n.time)
-      bp2.Q.setValueAtTime(3.5, t + n.time)
-
-      // Add filtered white noise for breathiness/crowd whispering texture
-      let ns = null
-      try {
-        ns = noise(c)
-        const noiseGain = c.createGain()
-        noiseGain.gain.setValueAtTime(0.005, t + n.time)
-        noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + n.time + n.dur)
-        
-        const noiseFilter = c.createBiquadFilter()
-        noiseFilter.type = 'bandpass'
-        noiseFilter.frequency.setValueAtTime(800, t + n.time)
-        noiseFilter.Q.setValueAtTime(1.5, t + n.time)
-        
-        ns.connect(noiseFilter).connect(noiseGain).connect(noteGain)
-        ns.start(t + n.time)
-        ns.stop(t + n.time + n.dur)
-      } catch (e) {
-        // Fallback if noise buffer fails
+      // Loop twice for wins/game-on, play once for 180s
+      let playCount = 1
+      if (type === 'chase-the-sun' || type === 'nine-darter' || type === 'win') {
+        playCount = 2
       }
 
-      const oscillators = []
-      for (let v = 0; v < numVoices; v++) {
-        const osc = c.createOscillator()
-        // Use triangle waves (softer, less brassy than sawtooth)
-        osc.type = 'triangle'
-        const detune = (Math.random() - 0.5) * 60 // wide detune for chorus
-        osc.frequency.setValueAtTime(n.freq, t + n.time)
-        osc.detune.setValueAtTime(detune, t + n.time)
-        
-        osc.connect(bp1)
-        osc.connect(bp2)
-        oscillators.push(osc)
+      if (playCount > 1) {
+        src.loop = true
+        const duration = crowdState.chantBuffer.duration * playCount
+        gainNode.gain.setValueAtTime(0.35, t + duration - 1.0)
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, t + duration)
+        src.start(t)
+        src.stop(t + duration)
+      } else {
+        src.loop = false
+        const duration = crowdState.chantBuffer.duration
+        gainNode.gain.setValueAtTime(0.35, t + duration - 0.5)
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, t + duration)
+        src.start(t)
       }
 
-      bp1.connect(noteGain)
-      bp2.connect(noteGain)
-      
-      noteGain.connect(c.destination)
-      
-      oscillators.forEach(osc => {
-        osc.start(t + n.time)
-        osc.stop(t + n.time + n.dur)
-      })
-    })
+      src.connect(gainNode).connect(c.destination)
+    } catch (err) {
+      console.error("Failed to play crowd chant:", err)
+    }
   }
 }
 
