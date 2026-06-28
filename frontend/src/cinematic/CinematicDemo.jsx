@@ -182,6 +182,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       sound.say('<speak><prosody rate="0.85" pitch="+1st">Game <break time="300ms"/> on!</prosody></speak>', { rate: 0.88 })
       sound.cheer(false)
       crowd.roar()
+      crowd.singChant('chase-the-sun')
       await W(2400)
       setBigCall(null)
 
@@ -214,6 +215,9 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           // ── Finale ──
           const isNineDarter = visit.call && /nine-dart|nine darts/i.test(visit.call)
           triggerCrowdRoar(isNineDarter ? 'nine-darter' : 'win')
+          setTimeout(() => {
+            crowd.singChant('chase-the-sun')
+          }, 1500)
           // visit.call may be SSML or plain text — say() handles both
           sound.say(visit.call, { rate: 0.88, pitch: 1.0 })
           setBigCall({ text: 'GAME SHOT!', sub: `${pl.name.toUpperCase()} IS THE CHAMPION` })
@@ -233,6 +237,9 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           setBigCall({ text: '180', sub: 'ONE HUNDRED AND EIGHTY!' })
           sound.say(visit.call, { rate: 0.82, pitch: 1.05 })  // visit.call may be SSML
           setPose(p, 'celebrate')
+          setTimeout(() => {
+            crowd.singChant('stand-up')
+          }, 1500)
           await W(5000)
           setBigCall(null)
           setPose(p, 'idle')

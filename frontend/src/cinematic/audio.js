@@ -51,6 +51,38 @@ const crowdState = {
   roarBuffer: null,
 }
 
+let _clinkInterval = null
+
+function playGlassClink(t) {
+  const c = ac(); if (!c) return
+  try {
+    const osc1 = c.createOscillator()
+    const osc2 = c.createOscillator()
+    const gain = c.createGain()
+    
+    osc1.type = 'sine'
+    const f1 = 2500 + Math.random() * 900
+    const f2 = f1 * 1.14
+    osc1.frequency.setValueAtTime(f1, t)
+    osc2.frequency.setValueAtTime(f2, t)
+    
+    gain.gain.setValueAtTime(0, t)
+    gain.gain.linearRampToValueAtTime(0.01, t + 0.003)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
+    
+    osc1.connect(gain)
+    osc2.connect(gain)
+    gain.connect(c.destination)
+    
+    osc1.start(t)
+    osc2.start(t)
+    osc1.stop(t + 0.25)
+    osc2.stop(t + 0.25)
+  } catch (err) {
+    // no-op
+  }
+}
+
 async function loadCrowdBuffers() {
   const c = ac()
   if (!c) {
@@ -169,6 +201,17 @@ export const crowd = {
     }
 
     updateCrossfade(t)
+
+    // Start random background glass clinks for pub atmosphere
+    if (_clinkInterval) clearInterval(_clinkInterval)
+    _clinkInterval = setInterval(() => {
+      if (!crowdState.running) return
+      if (Math.random() < 0.35) {
+        const timeOffset = Math.random() * 2.0
+        const ctx_ = ac()
+        if (ctx_) playGlassClink(ctx_.currentTime + timeOffset)
+      }
+    }, 7000)
   },
 
   stop() {
@@ -176,6 +219,11 @@ export const crowd = {
     crowdState.running = false
     const c = ctx
     const t = c ? c.currentTime : 0
+
+    if (_clinkInterval) {
+      clearInterval(_clinkInterval)
+      _clinkInterval = null
+    }
 
     if (c && crowdState.masterGain) {
       try {
@@ -298,6 +346,86 @@ export const crowd = {
       g.linearRampToValueAtTime(Math.sin(crowdState.base * Math.PI / 2) * 0.08, t + 3.0)
     }
   },
+
+  singChant(type = 'chase-the-sun') {
+    console.log(`Crowd: singing chant ${type}`)
+    if (!enabled || !crowdState.running) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+
+    let notes = []
+    if (type === 'chase-the-sun') {
+      const step = 0.22 // eighth note duration (~136 BPM)
+      const melody = [
+        { f: 440.00, d: 2, t: 0 },    // A4
+        { f: 440.00, d: 1, t: 2 },    // A4
+        { f: 523.25, d: 1, t: 3 },    // C5
+        { f: 493.88, d: 2, t: 4 },    // B4
+        { f: 392.00, d: 2, t: 6 },    // G4
+        { f: 440.00, d: 2, t: 8 },    // A4
+        { f: 440.00, d: 1, t: 10 },   // A4
+        { f: 523.25, d: 1, t: 11 },   // C5
+        { f: 493.88, d: 2, t: 12 },   // B4
+        { f: 392.00, d: 2, t: 14 },   // G4
+        // Chorus surge
+        { f: 440.00, d: 4, t: 16 },   // A4
+        { f: 523.25, d: 4, t: 20 },   // C5
+        { f: 392.00, d: 4, t: 24 },   // G4
+        { f: 329.63, d: 6, t: 28 }    // E4
+      ]
+      notes = melody.map(n => ({ freq: n.f, dur: n.d * step, time: n.t * step }))
+    } else if (type === 'stand-up') {
+      const step = 0.4
+      const melody = [
+        { f: 392.00, d: 2.2, t: 0 },   // G4 "Stand"
+        { f: 392.00, d: 1.0, t: 2.2 }, // G4 "up"
+        { f: 329.63, d: 1.0, t: 3.2 }, // E4 "if"
+        { f: 349.23, d: 1.0, t: 4.2 }, // F4 "you"
+        { f: 392.00, d: 1.0, t: 5.2 }, // G4 "love"
+        { f: 440.00, d: 2.2, t: 6.2 }, // A4 "the"
+        { f: 392.00, d: 3.5, t: 8.4 }  // G4 "darts!"
+      ]
+      notes = melody.map(n => ({ freq: n.f, dur: n.d * step, time: n.t * step }))
+    }
+
+    notes.forEach(n => {
+      const numVoices = 8
+      const noteGain = c.createGain()
+      
+      noteGain.gain.setValueAtTime(0, t + n.time)
+      noteGain.gain.linearRampToValueAtTime(0.035, t + n.time + 0.06)
+      noteGain.gain.setValueAtTime(0.035, t + n.time + n.dur - 0.06)
+      noteGain.gain.linearRampToValueAtTime(0.0001, t + n.time + n.dur)
+
+      const lp = c.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.setValueAtTime(950, t + n.time)
+
+      const bp = c.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.frequency.setValueAtTime(700, t + n.time)
+      bp.Q.setValueAtTime(2.5, t + n.time)
+
+      const oscillators = []
+      for (let v = 0; v < numVoices; v++) {
+        const osc = c.createOscillator()
+        osc.type = 'sawtooth'
+        const detune = (Math.random() - 0.5) * 45
+        osc.frequency.setValueAtTime(n.freq, t + n.time)
+        osc.detune.setValueAtTime(detune, t + n.time)
+        osc.connect(lp)
+        oscillators.push(osc)
+      }
+
+      lp.connect(bp).connect(noteGain).connect(c.destination)
+      
+      oscillators.forEach(osc => {
+        osc.start(t + n.time)
+        osc.stop(t + n.time + n.dur)
+      })
+    })
+  }
+},
 }
 
 // ── Walk-on theme stings ─────────────────────────────────────────────────────

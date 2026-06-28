@@ -578,6 +578,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
         roarType = '180'
       }
       crowd.roar(roarType)   // crowd swells on every big moment (audio)
+      
+      if (roarType === '180') {
+        setTimeout(() => crowd.singChant('stand-up'), 1500)
+      } else if (roarType === 'win' || roarType === 'nine-darter') {
+        setTimeout(() => crowd.singChant('chase-the-sun'), 1500)
+      }
       // Visual partner: bounce the crowd silhouettes. Re-arm so back-to-back
       // big calls each retrigger the bounce. Deferred (setTimeout 0) to avoid a
       // synchronous setState inside the effect body.

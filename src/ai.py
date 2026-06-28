@@ -167,6 +167,14 @@ def decide_target_label(game):
     if mode == "Count Up":
         return "T20"
 
+    # ── X01: open with a double/master before scoring. ──────────────────────
+    if game.double_in and not p.opened:
+        # Master-in: a treble also opens; T20 is the highest-value opener.
+        if game.check_in == "master":
+            return "T20"
+        # Double-in: aim for D20.
+        return "D20"
+
     # ── X01: use the checkout solver, else build the score. ─────────────────
     hint = suggest(p.score, game.darts_left, game.double_out)
     if hint:
