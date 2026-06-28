@@ -351,7 +351,7 @@ export const crowd = {
   },
 
   singChant(type = 'chase-the-sun') {
-    console.log(`Crowd: singing chant ${type}`)
+    console.log(`Crowd: singing chant "${type}" triggered.`)
     if (!enabled) return
     const c = ac(); if (!c) return
     const t = c.currentTime
@@ -366,28 +366,28 @@ export const crowd = {
       src.buffer = crowdState.chantBuffer
 
       const gainNode = c.createGain()
-      // Adjust volume to blend naturally into the background
+      // Fade in over 0.3s
       gainNode.gain.setValueAtTime(0, t)
-      gainNode.gain.linearRampToValueAtTime(0.35, t + 0.4)
+      gainNode.gain.linearRampToValueAtTime(0.35, t + 0.3)
 
-      // Loop twice for wins/game-on, play once for 180s
       let playCount = 1
       if (type === 'chase-the-sun' || type === 'nine-darter' || type === 'win') {
         playCount = 2
       }
 
+      const duration = crowdState.chantBuffer.duration * playCount
+      
+      // Safe fade-out: start fade-out at 1.0s before the end, but no earlier than t + 0.4s
+      const fadeStart = Math.max(0.4, duration - 1.0)
+      gainNode.gain.setValueAtTime(0.35, t + fadeStart)
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, t + duration)
+
       if (playCount > 1) {
         src.loop = true
-        const duration = crowdState.chantBuffer.duration * playCount
-        gainNode.gain.setValueAtTime(0.35, t + duration - 1.0)
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, t + duration)
         src.start(t)
         src.stop(t + duration)
       } else {
         src.loop = false
-        const duration = crowdState.chantBuffer.duration
-        gainNode.gain.setValueAtTime(0.35, t + duration - 0.5)
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, t + duration)
         src.start(t)
       }
 
