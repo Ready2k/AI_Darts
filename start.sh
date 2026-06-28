@@ -8,8 +8,19 @@ echo "Checking for old processes..."
 
 echo "Checking darts cameras..."
 if ! "$SCRIPT_DIR/scripts/check_cameras.sh"; then
-    echo "Camera check failed — not all 3 darts cameras are connected. Aborting startup."
-    exit 1
+    echo ""
+    echo "⚠️  Camera check failed — not all 3 darts cameras are connected."
+    if [ -t 0 ]; then
+        read -r -p "Would you like to continue and start in Demo Mode? [y/N] " ans
+        if [[ "$ans" =~ ^[Yy]$ ]]; then
+            echo "Starting in Demo Mode..."
+        else
+            echo "Aborting startup."
+            exit 1
+        fi
+    else
+        echo "Non-interactive shell: continuing in Demo Mode..."
+    fi
 fi
 
 echo "Starting Backend (FastAPI)..."
