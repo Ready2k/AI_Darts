@@ -211,7 +211,7 @@ function GameSetup({ onStarted }) {
           rounds: usesRounds ? rounds : null,
           lives: usesLives ? lives : null,
           killer_in: usesLives ? killerIn : null,
-          legs_to_win: legs, sets_to_win: 1, debug,
+          legs_to_win: Math.ceil(legs / 2), sets_to_win: 1, debug,
         }),
       })
 
@@ -328,7 +328,7 @@ function GameSetup({ onStarted }) {
           </div>
         )}
         <div>
-          <label className="text-xs uppercase tracking-widest text-white/40">Legs to Win</label>
+          <label className="text-xs uppercase tracking-widest text-white/40">Best of (Legs)</label>
           <div className="flex gap-2 mt-2">
             {[1, 3, 5].map(l => (
               <button key={l} onClick={() => setLegs(l)}

@@ -286,6 +286,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const prevKillerRef = useRef(null)
   const prevCricketRef = useRef(null)
   const prevTurnRef = useRef(null)
+  const turnIntroTimer = useRef(null)   // defers the next-player call so the visit total speaks first
   const prevProgressRef = useRef(null)
   const prevCheckoutRef = useRef(false)
   const wasOnCheckoutRef = useRef(false)   // owned by the big-call effect (miss detection)
@@ -584,7 +585,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     }
   }, [game])
 
-  useEffect(() => () => { clearTimeout(bigCallTimer.current); clearTimeout(crowdReactTimer.current) }, [])
+  useEffect(() => () => { clearTimeout(bigCallTimer.current); clearTimeout(crowdReactTimer.current); clearTimeout(turnIntroTimer.current) }, [])
 
   // ── Win-moment finale (visual only) ───────────────────────────────────────
   // On game-over, after the themed big-call has had its moment, raise the shared
@@ -689,6 +690,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     if (phase !== 'match' || !game || game.over) {
       prevTurnRef.current = null
       prevProgressRef.current = null
+      clearTimeout(turnIntroTimer.current)
       return
     }
     const cur = game.current
@@ -706,12 +708,17 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       // X01: vary the intro via the commentary bank (one variant is still the
       // classic "{name} needs N"). Other modes keep their mode-specific phrase.
       const mode = game.mode ?? 'X01'
-      if (mode === 'X01') {
-        const p = game.players?.[cur]
-        if (p) sound.say(pickLine('turnIntro', { name: p.name || 'Player', need: p.score }), { rate: 0.96 })
-      } else {
-        const phrase = turnIntro(game, cur)
-        if (phrase) sound.say(phrase, { rate: 0.96 })
+      const introLine = mode === 'X01'
+        ? (np ? pickLine('turnIntro', { name: np.name || 'Player', need: np.score }) : null)
+        : turnIntro(game, cur)
+      // Defer the next-player call: the just-completed visit's total ("62") is
+      // enqueued by App's throw-animation effect, which runs *after* this child
+      // effect in the same commit — speaking immediately would put "Here comes
+      // James" ahead of the score. The delay lets the total land first and adds a
+      // deliberate beat between the two.
+      if (introLine) {
+        clearTimeout(turnIntroTimer.current)
+        turnIntroTimer.current = setTimeout(() => sound.say(introLine, { rate: 0.96 }), 1100)
       }
       return
     }
