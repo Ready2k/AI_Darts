@@ -110,7 +110,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
 
     const throwOne = async (d, p, pl, scores_, stats_) => {
       setPose(p, 'aim')
-      await W(700)
+      await W(1000)
       setPose(p, 'throw')
       sound.whoosh()
       await W(180)
@@ -131,14 +131,14 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       setScores([...scores_])
       setStats(stats_.map((s) => ({ ...s })))
       setVisitDarts((prev) => [...prev, { label: d.miss ? 'MISS' : d.label }])
-      await W(500)
+      await W(800)
       setPose(p, 'idle')
       if (d.drama) {
         setDrama(d.drama)
-        await W(1500)
+        await W(2500)
         setDrama(null)
       } else {
-        await W(280)
+        await W(700)
       }
     }
 
@@ -168,6 +168,10 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           : `<speak><prosody rate="0.95">${raw}</prosody></speak>`
         sound.say(ssml, { priority: true })
         await WS(5600)
+      }
+      if (!skipped) {
+        // Give the second player's walk-on card some breathing room to finish walking in
+        await WS(3000)
       }
       skipRef.current = null
       sound.stop()
@@ -229,7 +233,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           setBigCall({ text: '180', sub: 'ONE HUNDRED AND EIGHTY!' })
           sound.say(visit.call, { rate: 0.82, pitch: 1.05 })  // visit.call may be SSML
           setPose(p, 'celebrate')
-          await W(2800)
+          await W(5000)
           setBigCall(null)
           setPose(p, 'idle')
         } else {
@@ -237,14 +241,16 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           if (visit.total >= 100) {
             sound.cheer(false)
             crowd.roar('normal')
+            await W(3500)
+          } else {
+            await W(2200)
           }
-          await W(1600)
         }
 
         setBoardDarts([])
         setPops([])
         setHint(null)
-        await W(450)
+        await W(2500)
       }
     }
 
