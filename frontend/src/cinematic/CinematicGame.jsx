@@ -40,7 +40,7 @@ function rulesFor(game) {
           'A number is dead (no points) once everyone has closed it.',
           'Win by closing all your numbers with the points lead (or level).',
         ],
-        say: 'Cricket. Close twenty down to fifteen and the bull. Closing is per player. Score points on your closed numbers while an opponent is still open, then finish with the lead to win.',
+        say: '<speak>Cricket. <break time="200ms"/> Close <prosody rate="fast">twenty down to fifteen</prosody> and the bull. Closing is per player. Score points on your closed numbers while an opponent is still open, <prosody rate="slow">then finish with the lead to win.</prosody></speak>',
       }
     case 'Around the Clock':
       return {
@@ -51,7 +51,7 @@ function rulesFor(game) {
           'Any single, double or treble of your target counts.',
           'First player to clear the bull wins.',
         ],
-        say: 'Around the Clock. Hit one through twenty in order, then the bull. First to finish wins.',
+        say: '<speak>Around the Clock. <break time="200ms"/> Hit <prosody rate="fast">one through twenty</prosody> in order, then the bull. <prosody rate="slow">First to finish wins.</prosody></speak>',
       }
     case 'Shanghai':
       return {
@@ -63,7 +63,7 @@ function rulesFor(game) {
           `Highest total after ${rounds ?? 7} rounds wins…`,
           'Hit the single, double AND treble in one visit for an instant Shanghai!',
         ],
-        say: 'Shanghai. Hit the round number for points. Land a single, double and treble in one visit to win outright.',
+        say: '<speak>Shanghai. <break time="200ms"/> Hit the round number for points. <prosody rate="slow">Land a single, double and treble in one visit</prosody> to <emphasis level="strong">win outright.</emphasis></speak>',
       }
     case 'Killer': {
       const hard = game?.arm_mode === 'double'
@@ -81,8 +81,8 @@ function rulesFor(game) {
           'Lose all your lives and you\'re out. Last player alive wins.',
         ],
         say: hard
-          ? 'Killer. Arm on your own double, then knock the lives off everyone else. Last one standing wins. Watch your own number!'
-          : 'Killer. Hit your own number three times to arm, then knock the lives off everyone else. Last one standing wins. Watch your own number!',
+          ? '<speak>Killer. <break time="200ms"/> Arm on <prosody pitch="+1st">your own double</prosody>, then knock the lives off everyone else. <prosody rate="slow">Last one standing wins.</prosody> <emphasis level="strong">Watch your own number!</emphasis></speak>'
+          : '<speak>Killer. <break time="200ms"/> Hit your own number <prosody rate="fast">three times to arm</prosody>, then knock the lives off everyone else. <prosody rate="slow">Last one standing wins.</prosody> <emphasis level="strong">Watch your own number!</emphasis></speak>',
       }
     }
     case 'Count Up':
@@ -94,7 +94,7 @@ function rulesFor(game) {
           'Pile on as many points as you can.',
           `Highest total after ${rounds ?? 8} rounds takes it.`,
         ],
-        say: `Count Up. Score as many points as you can over ${rounds ?? 8} rounds. Highest total wins.`,
+        say: `<speak>Count Up. <break time="200ms"/> Score as many points as you can over <prosody rate="fast">${rounds ?? 8} rounds.</prosody> <prosody rate="slow">Highest total wins.</prosody></speak>`,
       }
     default: {
       const ci = game?.check_in === 'master' ? 'Master in'
@@ -107,7 +107,7 @@ function rulesFor(game) {
           `${ci}${game?.double_out ? ', and you must finish on a double.' : '.'}`,
           'Three darts a visit — go bust and the visit is wiped.',
         ],
-        say: `${game?.start_score ?? 501}, ${ci.toLowerCase()}${game?.double_out ? ', double out' : ''}. First to zero wins.`,
+        say: `<speak><prosody pitch="+1st">${game?.start_score ?? 501}.</prosody> <break time="200ms"/> ${ci.toLowerCase()}${game?.double_out ? ', double out' : ''}. <prosody rate="slow">First to zero wins.</prosody></speak>`,
       }
     }
   }
@@ -375,7 +375,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
       const announce = (pl) => {
         sound.cheer(false)
         sound.walkOnTheme(pl.theme)   // persona entrance sting
-        sound.say(`Introducing... ${pl.name}. ${pl.nick}!`, { rate: 1.0, pitch: 1.04, priority: true })
+        sound.say(`<speak>Introducing... <break time="400ms"/> <prosody pitch="+2st" rate="0.9">${pl.name}.</prosody> <prosody rate="slow">${pl.nick}!</prosody></speak>`, { rate: 1.0, pitch: 1.04, priority: true })
         if (pl.catchphrase) sound.say(pl.catchphrase, { rate: 0.98, pitch: 1.0, priority: true })
       }
       sound.stop()
@@ -414,9 +414,9 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
           setPhase('h2h')
           // A short needle line — revenge match vs first meeting.
           if (!data.never_met) {
-            sound.say(`A rivalry renewed. ${pa.name} versus ${pb.name}.`, { rate: 0.97 })
+            sound.say(`<speak>A rivalry <prosody pitch="+1st">renewed.</prosody> <break time="300ms"/> ${pa.name} versus ${pb.name}.</speak>`, { rate: 0.97 })
           } else {
-            sound.say(`First meeting — ${pa.name} against ${pb.name}.`, { rate: 0.97 })
+            sound.say(`<speak>First meeting — <break time="200ms"/> <prosody pitch="+1st">${pa.name}</prosody> against <prosody pitch="+1st">${pb.name}.</prosody></speak>`, { rate: 0.97 })
           }
           walkTimers.current.push(setTimeout(showRules, H2H_DWELL))
         }, afterWalkons))
@@ -475,12 +475,12 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     walkTimers.current.forEach(clearTimeout)
     walkTimers.current = []
     if ((game?.mode) === 'Killer') {
-      sound.say('Spin for your numbers!', { rate: 0.98, priority: true })
+      sound.say('<speak><prosody rate="fast" pitch="+2st">Spin for your numbers!</prosody></speak>', { rate: 0.98, priority: true })
       setPhase('spin')
       return
     }
     sound.cheer(false)
-    sound.say('Game on!', { rate: 0.9, priority: true })
+    sound.say('<speak><prosody rate="0.85" pitch="+1st">Game <break time="200ms"/> on!</prosody></speak>', { rate: 0.9, priority: true })
     setPhase('match')
   }
 
@@ -488,7 +488,7 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
   const confirmNumbers = async (numbers) => {
     try { await onAssignNumbers?.(numbers) } catch { /* non-fatal */ }
     sound.cheer(false)
-    sound.say('Game on!', { rate: 0.9, priority: true })
+    sound.say('<speak><prosody rate="0.85" pitch="+1st">Game <break time="200ms"/> on!</prosody></speak>', { rate: 0.9, priority: true })
     setPhase('match')
   }
 
@@ -535,10 +535,10 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     if (x01 && lf && legWon && (lf.seq ?? -1) === seq) {
       if (lf.leg_darts === 9) {
         feat = { text: 'NINE DARTER', sub: 'PERFECT LEG', feat: true }
-        priorityLine = true; line = `Nine darter! ${lf.player} — a perfect leg!`
+        priorityLine = true; line = `<speak><prosody rate="slow" pitch="+3st">Nine darter!</prosody> <break time="300ms"/> <emphasis level="strong">${lf.player}</emphasis> — <prosody pitch="+2st">a perfect leg!</prosody></speak>`
       } else if (lf.checkout >= 100) {
         feat = { text: String(lf.checkout), sub: 'HIGH CHECKOUT', feat: true }
-        priorityLine = true; line = `What a finish! ${lf.checkout} checkout!`
+        priorityLine = true; line = `<speak>What a <prosody pitch="+2st">finish!</prosody> <break time="200ms"/> <emphasis level="strong">${lf.checkout} checkout!</emphasis></speak>`
       }
     }
 
@@ -675,7 +675,15 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
             const name = players[i]?.name || 'Player'
             sound.kerching()   // success cue: a number just closed
             const head = pickLine('cricketClose', { name, label })
-            sound.say(`${head} ${scoreable ? 'Open for points.' : 'Dead number.'}`, { rate: 0.95 })
+            const tail = scoreable
+              ? '<prosody rate="fast" pitch="+1st">Open for points!</prosody>'
+              : '<prosody pitch="-1st">Dead number.</prosody>'
+            // head may itself be SSML — splice the tail inside the </speak> if so,
+            // otherwise wrap both in a single speak block.
+            const merged = head.startsWith('<speak>')
+              ? head.replace('</speak>', ` <break time="150ms"/> ${tail}</speak>`)
+              : `<speak>${head} <break time="150ms"/> ${tail}</speak>`
+            sound.say(merged, { rate: 0.95 })
           }
         })
       })

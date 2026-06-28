@@ -3,84 +3,86 @@
 // never fires twice in a row for a given event. Keep lines SHORT — they're spoken
 // by sound.say() and shouldn't pile up.
 //
+// Strings wrapped in <speak>…</speak> are parsed by the SSML processor in
+// audio.js — prosody/emphasis/break tags shape how they sound. Plain strings
+// still work for simple cases.
+//
 // ctx fields used (all optional): name, need, total, target, label, leader,
-// victim, killer.
+// victim, killer, foe.
 
 const fill = (tpl, ctx) =>
   tpl.replace(/\{(\w+)\}/g, (_, k) => (ctx?.[k] != null ? String(ctx[k]) : ''))
 
 // Each event → an array of templates. {name} etc. are filled from ctx.
 const LINES = {
-  // Turn handover. The plain "{name} needs {need}" phrasing is kept as the first
-  // variant so the existing per-turn intro is still possible (X01 fills `need`
-  // with the score; other modes pass a phrase via `need`).
+  // Turn handover — punchy, MC-style, variety of openers.
   turnIntro: [
-    '{name} needs {need}',
-    'Up steps {name}',
-    '{name} to the oche',
-    'Here comes {name}',
-    'Over to {name}',
-    'It\'s {name}\'s turn',
+    '<speak><break time="150ms"/><emphasis level="strong">{name}</emphasis> needs <prosody rate="slow" pitch="-1st">{need}</prosody>.</speak>',
+    '<speak>Up steps <prosody pitch="+1st">{name}</prosody>.</speak>',
+    '<speak><prosody rate="fast">{name}</prosody> to the oche!</speak>',
+    '<speak>Here comes <emphasis level="strong">{name}</emphasis>.</speak>',
+    '<speak>Over to <prosody pitch="+1st">{name}</prosody>.</speak>',
+    '<speak>It\'s <emphasis level="moderate">{name}</emphasis>\'s turn.</speak>',
   ],
   // A big visit total (X01). ctx.total is the visit score.
   visitTotal: [
-    'Get in there! {total}!',
-    'Lovely darts! {total}!',
-    'What a visit — {total}!',
-    'Oh, that\'s class! {total}!',
-    'Big score, {total}!',
+    '<speak><prosody rate="fast" pitch="+1st">Get in there!</prosody> <emphasis level="strong">{total}!</emphasis></speak>',
+    '<speak>Lovely darts! <prosody pitch="+1st">{total}!</prosody></speak>',
+    '<speak>What a visit — <prosody rate="slow" pitch="+2st">{total}!</prosody></speak>',
+    '<speak>Oh, <prosody pitch="+1st">that\'s class!</prosody> <emphasis level="strong">{total}!</emphasis></speak>',
+    '<speak><prosody rate="fast">Big score</prosody> — <prosody pitch="+2st">{total}!</prosody></speak>',
   ],
   // A finish attempt missed.
   checkoutMiss: [
-    'Just missed it!',
-    'Agonising — so close!',
-    'Rattled the wire!',
-    'Not this time.',
-    'Oh, he\'ll be sick with that.',
+    '<speak><prosody pitch="-1st" rate="slow">Just missed it!</prosody></speak>',
+    '<speak><emphasis level="moderate">Agonising</emphasis> — so close!</speak>',
+    '<speak>Rattled the wire!</speak>',
+    '<speak><prosody rate="0.9" pitch="-1st">Not this time.</prosody></speak>',
+    '<speak>Oh, <prosody pitch="-1st">he\'ll be sick with that.</prosody></speak>',
   ],
   // The lead changed hands.
   leadChange: [
-    '{leader} hits the front!',
-    'And there\'s the lead change — {leader} ahead!',
-    '{leader} noses in front!',
-    'New leader — {leader}!',
+    '<speak><emphasis level="strong">{leader}</emphasis> hits the front!</speak>',
+    '<speak>And there\'s the lead change — <prosody pitch="+1st">{leader}</prosody> ahead!</speak>',
+    '<speak><prosody rate="fast">{leader}</prosody> noses in front!</speak>',
+    '<speak>New leader — <emphasis level="strong">{leader}!</emphasis></speak>',
   ],
   // A Killer player just armed.
   killerArm: [
-    'Locked and loaded!',
-    '{name} is armed and dangerous!',
-    '{name} becomes a killer!',
-    'Watch out — {name} is live!',
+    '<speak><prosody rate="fast" pitch="+2st">Locked and loaded!</prosody></speak>',
+    '<speak><emphasis level="strong">{name}</emphasis> is <prosody pitch="+1st">armed and dangerous!</prosody></speak>',
+    '<speak><prosody pitch="+1st">{name}</prosody> becomes a <emphasis level="strong">killer!</emphasis></speak>',
+    '<speak>Watch out — <prosody rate="fast" pitch="+2st">{name} is live!</prosody></speak>',
   ],
   // A player was eliminated.
   eliminated: [
-    '{victim} is out!',
-    'And that\'s {victim} gone!',
-    'Lights out for {victim}!',
-    '{victim} is eliminated!',
+    '<speak><prosody pitch="-2st" rate="slow">{victim} is out!</prosody></speak>',
+    '<speak>And that\'s <prosody pitch="-1st">{victim}</prosody> <emphasis level="strong">gone!</emphasis></speak>',
+    '<speak><prosody rate="slow" pitch="-2st">Lights out</prosody> for {victim}!</speak>',
+    '<speak><emphasis level="strong">{victim}</emphasis> is <prosody pitch="-2st">eliminated!</prosody></speak>',
   ],
   // A Cricket number was closed.
   cricketClose: [
-    '{name} closes {label}!',
-    '{label} shut down by {name}!',
-    'That\'s {label} closed for {name}!',
+    '<speak><emphasis level="moderate">{name}</emphasis> closes <prosody pitch="+1st">{label}!</prosody></speak>',
+    '<speak><prosody pitch="+1st">{label}</prosody> shut down by {name}!</speak>',
+    '<speak>That\'s <prosody pitch="+1st">{label}</prosody> closed for <emphasis level="moderate">{name}!</emphasis></speak>',
   ],
   // The recurring AI nemesis ("The Machine") trash-talks. Short + droppable —
   // these are flavour, never priority. ctx.name = the nemesis, ctx.foe = human.
   nemesis: [
-    'The Machine does not miss.',
-    'Resistance is futile, {foe}.',
-    'You cannot out-throw a machine.',
-    '{name} is just warming up.',
-    'Calculating your defeat, {foe}.',
-    'The Machine has seen this leg before.',
+    '<speak><prosody pitch="-2st" rate="0.9">The Machine does not miss.</prosody></speak>',
+    '<speak><prosody pitch="-1st">Resistance is futile, {foe}.</prosody></speak>',
+    '<speak>You cannot out-throw a machine.</speak>',
+    '<speak><prosody pitch="-1st">{name}</prosody> is just warming up.</speak>',
+    '<speak><prosody rate="0.85" pitch="-2st">Calculating your defeat, {foe}.</prosody></speak>',
+    '<speak>The Machine has seen this leg before.</speak>',
   ],
   // The match is won.
   win: [
-    'Game shot! {name} takes it!',
-    'And {name} is the champion!',
-    'It\'s all over — {name} wins!',
-    'What a finish from {name}!',
+    '<speak><prosody rate="slow" pitch="+3st">Game <break time="300ms"/> shot!</prosody> <emphasis level="strong">{name} takes it!</emphasis></speak>',
+    '<speak>And <emphasis level="strong">{name}</emphasis> <prosody pitch="+2st">is the champion!</prosody></speak>',
+    '<speak><prosody rate="slow">It\'s all over</prosody> — <prosody pitch="+2st">{name} wins!</prosody></speak>',
+    '<speak>What a <prosody pitch="+1st">finish</prosody> from <emphasis level="strong">{name}!</emphasis></speak>',
   ],
 }
 

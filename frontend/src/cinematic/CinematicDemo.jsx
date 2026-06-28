@@ -125,13 +125,14 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       const WS = (ms) => Promise.race([W(ms), skipP])
 
       setPhase('title')
-      sound.say(`Welcome... to the ${MATCH.title}!`, { rate: 1.0, pitch: 1.0 })
+      sound.say(`<speak>Welcome... <break time="400ms"/> to the <prosody pitch="+2st" rate="0.9">${MATCH.title}!</prosody></speak>`, { rate: 1.0, pitch: 1.0 })
       await WS(4400)
       for (let i = 0; i < PLAYERS.length && !skipped; i++) {
         setWalkonIdx(i)
         setPhase('walkon')
         sound.stop()
         sound.cheer(false)
+        // PLAYERS[i].announce may be plain text or SSML from scripts.js
         sound.say(PLAYERS[i].announce, { rate: 1.02, pitch: 1.05 })
         await WS(5600)
       }
@@ -141,7 +142,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
       // ── Game on ──
       setPhase('match')
       setBigCall({ text: 'GAME ON!', sub: MATCH.subtitle })
-      sound.say('Game... on!', { rate: 0.88 })
+      sound.say('<speak><prosody rate="0.85" pitch="+1st">Game <break time="300ms"/> on!</prosody></speak>', { rate: 0.88 })
       sound.cheer(false)
       await W(2400)
       setBigCall(null)
@@ -169,6 +170,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
         if (visit.gameShot) {
           // ── Finale ──
           sound.cheer(true)
+          // visit.call may be SSML or plain text — say() handles both
           sound.say(visit.call, { rate: 0.88, pitch: 1.0 })
           setBigCall({ text: 'GAME SHOT!', sub: `${pl.name.toUpperCase()} IS THE CHAMPION` })
           setConfetti(true)
@@ -185,7 +187,7 @@ export default function CinematicDemo({ onExit, script = SCRIPTS[0] }) {
           sound.cheer(true)
           shake(2)
           setBigCall({ text: '180', sub: 'ONE HUNDRED AND EIGHTY!' })
-          sound.say(visit.call, { rate: 0.82, pitch: 1.05 })
+          sound.say(visit.call, { rate: 0.82, pitch: 1.05 })  // visit.call may be SSML
           setPose(p, 'celebrate')
           await W(2800)
           setBigCall(null)

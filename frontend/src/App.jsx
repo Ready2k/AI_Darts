@@ -16,7 +16,7 @@ import { useThrowAnimation } from './hooks/useThrowAnimation'
 import { ThrowState } from './config/timing'
 import CinematicDemo from './cinematic/CinematicDemo'
 import CinematicGame from './cinematic/CinematicGame'
-import { unlockAudio, sound } from './cinematic/audio'
+import { unlockAudio, sound, getAvailableVoices, setSelectedVoice, getSelectedVoiceURI, onVoicesReady } from './cinematic/audio'
 import { SCRIPTS } from './cinematic/scripts'
 import { getAvatar, NEMESIS_AVATAR_ID, NEMESIS_NAME } from './config/avatars'
 
@@ -40,11 +40,16 @@ function scoreToWords(n) {
 }
 
 function visitTotalToSpeech(total, { bust = false, legWon = false } = {}) {
-  if (bust) return 'No score!'
+  if (bust) return '<speak><prosody pitch="-2st" rate="slow">No score!</prosody></speak>'
   const words = scoreToWords(total)
   const cap = words.charAt(0).toUpperCase() + words.slice(1)
-  if (legWon) return `Game shot! ${total === 180 ? cap : cap + '!'}`
-  return total === 180 ? cap : `${cap}.`
+  if (legWon) {
+    return total === 180
+      ? `<speak><prosody rate="slow" pitch="+3st">Game <break time="300ms"/> shot!</prosody> <emphasis level="strong">${cap}!</emphasis></speak>`
+      : `<speak><prosody rate="slow" pitch="+3st">Game <break time="300ms"/> shot!</prosody> <prosody pitch="+2st">${cap}!</prosody></speak>`
+  }
+  if (total === 180) return `<speak><prosody rate="fast" pitch="+3st">One hundred <break time="100ms"/> and eighty!</prosody></speak>`
+  return `<speak><prosody pitch="+1st">${cap}.</prosody></speak>`
 }
 
 // ── Live game state via WebSocket push (auto-reconnecting) ──────────────────
@@ -1059,6 +1064,84 @@ function CinematicToggle({ on, onChange, disabled = false }) {
   )
 }
 
+// ── Voice picker (Settings) ──────────────────────────────────────────────────
+// Lets the user choose which TTS voice the MC uses. Populated once voices have
+// loaded (Chrome loads them async). Persisted in localStorage.
+function VoicePicker() {
+  const [voices, setVoices] = useState([])
+  const [selected, setSelected] = useState(() => getSelectedVoiceURI() || '')
+  const [testing, setTesting] = useState(false)
+
+  useEffect(() => {
+    onVoicesReady(() => {
+      setVoices(getAvailableVoices())
+      // Refresh selected to whatever is currently stored (may have been set by
+      // selectBestVoice on first load).
+      setSelected(getSelectedVoiceURI() || '')
+    })
+  }, [])
+
+  const handleChange = (e) => {
+    const uri = e.target.value
+    setSelected(uri)
+    setSelectedVoice(uri)
+  }
+
+  const testVoice = () => {
+    if (testing) return
+    setTesting(true)
+    sound.say('<speak>One hundred <break time="200ms"/> and eighty!</speak>', { priority: true })
+    setTimeout(() => setTesting(false), 3000)
+  }
+
+  if (!voices.length) return null
+
+  // Group: en-GB first, then other en-*
+  const gbVoices = voices.filter((v) => v.lang === 'en-GB')
+  const otherVoices = voices.filter((v) => v.lang !== 'en-GB')
+
+  return (
+    <div className="max-w-xl w-full mx-auto px-8 pt-5 pb-6 border-b border-white/10 space-y-3">
+      <label className="text-xs uppercase tracking-widest text-white/40">MC Voice</label>
+      <div className="flex gap-2 items-stretch">
+        <select
+          value={selected}
+          onChange={handleChange}
+          className="flex-1 px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 focus:border-cyan-400/50 outline-none text-sm text-white/90 appearance-none cursor-pointer"
+        >
+          {!selected && <option value="">Auto (recommended)</option>}
+          {gbVoices.length > 0 && (
+            <optgroup label="English (UK)">
+              {gbVoices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name}{v.localService ? '' : ' ·'}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {otherVoices.length > 0 && (
+            <optgroup label="English (other)">
+              {otherVoices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name} ({v.lang}){v.localService ? '' : ' ·'}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
+        <button
+          onClick={testVoice}
+          disabled={testing}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-sm font-semibold hover:bg-cyan-500/30 disabled:opacity-50 transition-colors shrink-0"
+        >
+          {testing ? 'Speaking…' : 'Test voice'}
+        </button>
+      </div>
+      <p className="text-[11px] text-white/30">· = cloud voice (requires internet). en-GB voices sound most authentic for darts.</p>
+    </div>
+  )
+}
+
 // ── App shell ───────────────────────────────────────────────────────────────
 function App() {
   const [activeTab, setActiveTab] = useState('Dashboard')
@@ -1203,7 +1286,7 @@ function App() {
         pendingAnnouncement.current = null
         if (ann.legWon) sound.cheer(true)
         else if (ann.visitTotal >= 100) sound.cheer(false)
-        sound.say(ann.text, { rate: ann.legWon ? 0.85 : 0.9, pitch: ann.legWon ? 1.05 : 1.0 })
+        sound.say(ann.text, { priority: ann.legWon })
       }
     } else if (animState === ThrowState.CELEBRATING) {
       sound.cheer(true)
@@ -1463,6 +1546,7 @@ function App() {
                 <CinematicToggle on={cinematicMode} onChange={setCinematic} />
               </div>
               <DetectionConfig config={config} onSave={saveConfig} />
+              <VoicePicker />
               <GameSetup onStarted={(pMap, opts) => { setAvatarMap(pMap); setAutoStartDetect(true); if (opts?.forceCinematic) setCinematic(true); refresh(); setActiveTab('Live Track') }} />
             </div>
           )}

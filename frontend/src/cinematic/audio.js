@@ -27,98 +27,233 @@ function noise(c) {
 }
 
 // ── Crowd ambience bed ───────────────────────────────────────────────────────
-// A single looping filtered-noise source through a lowpass + gain we ramp.
-// start()/stop() manage the lifecycle; setIntensity(0..1) sets the resting
-// level; roar() swells for a big moment; hush() drops to near-silence for a
-// checkout attempt (then restore() / setIntensity brings it back).
+// Real audio crowd bed consisting of two looping layers: crowd-ambient.mp3 (pub murmur)
+// and crowd-active.mp3 (louder crowd play-time). We crossfade between them based on
+// the intensity (setIntensity). A one-shot crowd-roar.mp3 is triggered on big moments.
 const crowdState = {
-  src: null,
-  lp: null,
-  gain: null,
-  base: 0.05,       // current resting intensity (0..1) mapped to a gain
   running: false,
+  base: 0.45,       // current resting intensity (0..1)
+  
+  // Audio nodes
+  ambientSource: null,
+  ambientGain: null,
+  activeSource: null,
+  activeGain: null,
+  masterGain: null,
+  
+  // Cached buffers
+  ambientBuffer: null,
+  activeBuffer: null,
+  roarBuffer: null,
 }
 
-// Map a 0..1 intensity to an actual gain value (kept low — it's a bed, not a roar).
-function crowdGainFor(intensity) {
-  return 0.012 + Math.max(0, Math.min(1, intensity)) * 0.07
+async function loadCrowdBuffers() {
+  const c = ac()
+  if (!c) {
+    console.warn("Crowd: AudioContext not available yet.")
+    return
+  }
+  if (crowdState.ambientBuffer && crowdState.activeBuffer && crowdState.roarBuffer) return
+
+  console.log("Crowd: Starting to load audio buffers...")
+  const [ambient, active, roar] = await Promise.all([
+    fetchAudioBuffer('/crowd-ambient.mp3?v=2'),
+    fetchAudioBuffer('/crowd-active.mp3?v=2'),
+    fetchAudioBuffer('/crowd-roar.mp3?v=2')
+  ])
+
+  crowdState.ambientBuffer = ambient
+  crowdState.activeBuffer = active
+  crowdState.roarBuffer = roar
+  console.log("Crowd: Buffers loaded. Ambient:", !!ambient, "Active:", !!active, "Roar:", !!roar)
+}
+
+async function fetchAudioBuffer(url) {
+  const c = ac()
+  if (!c) return null
+  try {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    const arrayBuffer = await response.arrayBuffer()
+    return await c.decodeAudioData(arrayBuffer)
+  } catch (err) {
+    console.error(`Failed to load audio buffer from ${url}:`, err)
+    return null
+  }
+}
+
+function updateCrossfade(t, duration = 0.6) {
+  if (!crowdState.running) return
+  const c = ac(); if (!c) return
+  
+  const v = crowdState.base
+  
+  // Equal-power crossfade curves
+  const ambientVol = Math.cos(v * Math.PI / 2)
+  const activeVol = Math.sin(v * Math.PI / 2)
+  
+  // Scale to appropriate background bed volumes (max 0.08)
+  const maxBedVolume = 0.08
+  const targetAmbient = ambientVol * maxBedVolume
+  const targetActive = activeVol * maxBedVolume
+
+  if (crowdState.ambientGain) {
+    const g = crowdState.ambientGain.gain
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(g.value, t)
+    g.linearRampToValueAtTime(targetAmbient, t + duration)
+  }
+
+  if (crowdState.activeGain) {
+    const g = crowdState.activeGain.gain
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(g.value, t)
+    g.linearRampToValueAtTime(targetActive, t + duration)
+  }
+
+  if (crowdState.masterGain) {
+    const g = crowdState.masterGain.gain
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(g.value, t)
+    g.linearRampToValueAtTime(1.0, t + duration)
+  }
 }
 
 export const crowd = {
-  start() {
+  async start() {
     if (!enabled) return
     if (crowdState.running) return
-    const c = ac(); if (!c) return
-    const t = c.currentTime
-    const src = noise(c)
-    src.loop = true
-    const lp = c.createBiquadFilter()
-    lp.type = 'lowpass'
-    lp.frequency.value = 760            // muffled murmur
-    const g = c.createGain()
-    g.gain.setValueAtTime(0.0001, t)
-    g.gain.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 1.2)  // fade in
-    src.connect(lp).connect(g).connect(c.destination)
-    src.start(t)
-    crowdState.src = src
-    crowdState.lp = lp
-    crowdState.gain = g
     crowdState.running = true
-  },
-  stop() {
-    const c = ctx
-    if (crowdState.src) {
-      try {
-        if (c && crowdState.gain) {
-          const t = c.currentTime
-          crowdState.gain.gain.cancelScheduledValues(t)
-          crowdState.gain.gain.setValueAtTime(crowdState.gain.gain.value, t)
-          crowdState.gain.gain.linearRampToValueAtTime(0.0001, t + 0.3)
-          crowdState.src.stop(t + 0.35)
-        } else {
-          crowdState.src.stop()
-        }
-      } catch { /* already stopped */ }
+    console.log("Crowd: start() called.")
+
+    const c = ac(); if (!c) return
+    
+    // Ensure buffers are loaded
+    await loadCrowdBuffers()
+    if (!crowdState.running) {
+      console.log("Crowd: stopped while loading buffers.")
+      return
     }
-    crowdState.src = null
-    crowdState.lp = null
-    crowdState.gain = null
-    crowdState.running = false
+
+    const t = c.currentTime
+    console.log("Crowd: starting audio sources...")
+
+    // Create master gain for the background bed
+    crowdState.masterGain = c.createGain()
+    crowdState.masterGain.gain.setValueAtTime(0, t)
+    crowdState.masterGain.gain.linearRampToValueAtTime(1, t + 1.2)
+    crowdState.masterGain.connect(c.destination)
+
+    // Start ambient loop
+    if (crowdState.ambientBuffer) {
+      crowdState.ambientSource = c.createBufferSource()
+      crowdState.ambientSource.buffer = crowdState.ambientBuffer
+      crowdState.ambientSource.loop = true
+      crowdState.ambientGain = c.createGain()
+      crowdState.ambientSource.connect(crowdState.ambientGain).connect(crowdState.masterGain)
+      crowdState.ambientSource.start(t)
+    }
+
+    // Start active loop
+    if (crowdState.activeBuffer) {
+      crowdState.activeSource = c.createBufferSource()
+      crowdState.activeSource.buffer = crowdState.activeBuffer
+      crowdState.activeSource.loop = true
+      crowdState.activeGain = c.createGain()
+      crowdState.activeSource.connect(crowdState.activeGain).connect(crowdState.masterGain)
+      crowdState.activeSource.start(t)
+    }
+
+    updateCrossfade(t)
   },
+
+  stop() {
+    console.log("Crowd: stop() called.")
+    crowdState.running = false
+    const c = ctx
+    const t = c ? c.currentTime : 0
+
+    if (c && crowdState.masterGain) {
+      try {
+        crowdState.masterGain.gain.cancelScheduledValues(t)
+        crowdState.masterGain.gain.setValueAtTime(crowdState.masterGain.gain.value, t)
+        crowdState.masterGain.gain.linearRampToValueAtTime(0.0001, t + 0.3)
+        
+        const ambient = crowdState.ambientSource
+        const active = crowdState.activeSource
+        setTimeout(() => {
+          try { ambient?.stop() } catch {}
+          try { active?.stop() } catch {}
+        }, 350)
+      } catch {
+        try { crowdState.ambientSource?.stop() } catch {}
+        try { crowdState.activeSource?.stop() } catch {}
+      }
+    } else {
+      try { crowdState.ambientSource?.stop() } catch {}
+      try { crowdState.activeSource?.stop() } catch {}
+    }
+
+    crowdState.ambientSource = null
+    crowdState.ambientGain = null
+    crowdState.activeSource = null
+    crowdState.activeGain = null
+    crowdState.masterGain = null
+  },
+
   setIntensity(v) {
     crowdState.base = Math.max(0, Math.min(1, v))
-    if (!enabled || !crowdState.running || !crowdState.gain) return
+    if (!enabled || !crowdState.running) return
     const c = ac(); if (!c) return
-    const t = c.currentTime
-    crowdState.gain.gain.cancelScheduledValues(t)
-    crowdState.gain.gain.setValueAtTime(crowdState.gain.gain.value, t)
-    crowdState.gain.gain.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 0.6)
+    updateCrossfade(c.currentTime, 0.6)
   },
-  // Swell up then settle back to the resting intensity (a big-moment roar).
-  roar() {
-    if (!enabled || !crowdState.running || !crowdState.gain || !crowdState.lp) return
-    const c = ac(); if (!c) return
-    const t = c.currentTime
-    const g = crowdState.gain.gain
-    const f = crowdState.lp.frequency
-    g.cancelScheduledValues(t)
-    g.setValueAtTime(g.value, t)
-    g.linearRampToValueAtTime(0.22, t + 0.35)                         // swell
-    g.linearRampToValueAtTime(crowdGainFor(crowdState.base), t + 1.9) // settle
-    f.cancelScheduledValues(t)
-    f.setValueAtTime(f.value, t)
-    f.linearRampToValueAtTime(2000, t + 0.35)   // brighten on the roar
-    f.linearRampToValueAtTime(760, t + 1.9)
-  },
-  // Drop to near-silence (a tense hush as a player goes for a finish).
+
   hush() {
-    if (!enabled || !crowdState.running || !crowdState.gain) return
+    if (!enabled || !crowdState.running || !crowdState.masterGain) return
     const c = ac(); if (!c) return
     const t = c.currentTime
-    const g = crowdState.gain.gain
+    const g = crowdState.masterGain.gain
     g.cancelScheduledValues(t)
     g.setValueAtTime(g.value, t)
-    g.linearRampToValueAtTime(0.004, t + 0.5)
+    g.linearRampToValueAtTime(0.05, t + 0.5) // fade bed down to 5% volume
+  },
+
+  roar() {
+    console.log("Crowd: roar() triggered. running:", crowdState.running, "hasRoarBuffer:", !!crowdState.roarBuffer, "enabled:", enabled)
+    if (!enabled || !crowdState.running || !crowdState.roarBuffer) return
+    const c = ac(); if (!c) return
+    const t = c.currentTime
+
+    // Play one-shot roar at full volume, bypassing the bed's masterGain
+    const roarSrc = c.createBufferSource()
+    roarSrc.buffer = crowdState.roarBuffer
+    
+    const roarGain = c.createGain()
+    roarGain.gain.setValueAtTime(0, t)
+    roarGain.gain.linearRampToValueAtTime(0.3, t + 0.15) // quick swell
+    roarGain.gain.setValueAtTime(0.3, t + 1.5)
+    roarGain.gain.exponentialRampToValueAtTime(0.0001, t + 4.5) // natural decay
+
+    roarSrc.connect(roarGain).connect(c.destination)
+    roarSrc.start(t)
+    roarSrc.stop(t + 4.6)
+
+    // Ensure the bed's masterGain is restored
+    if (crowdState.masterGain) {
+      const g = crowdState.masterGain.gain
+      g.cancelScheduledValues(t)
+      g.setValueAtTime(g.value, t)
+      g.linearRampToValueAtTime(1.0, t + 0.1)
+    }
+
+    // Temporarily boost active bed to blend with the roar
+    if (crowdState.activeGain) {
+      const g = crowdState.activeGain.gain
+      g.cancelScheduledValues(t)
+      g.setValueAtTime(g.value, t)
+      g.linearRampToValueAtTime(0.12, t + 0.3)
+      g.linearRampToValueAtTime(Math.sin(crowdState.base * Math.PI / 2) * 0.08, t + 3.0)
+    }
   },
 }
 
@@ -180,9 +315,51 @@ export function unlockAudio() {
 
 let cachedVoice = null
 
+// ── Voice picker helpers ─────────────────────────────────────────────────────
+const VOICE_STORAGE_KEY = 'darts_voice_uri'
+
+/** Returns all English voices, en-GB first then other en-* */
+export function getAvailableVoices() {
+  const all = window.speechSynthesis?.getVoices() || []
+  const enGB = all.filter((v) => v.lang === 'en-GB')
+  const enOther = all.filter((v) => v.lang?.startsWith('en') && v.lang !== 'en-GB')
+  return [...enGB, ...enOther]
+}
+
+/** Persist a voice choice and immediately apply it */
+export function setSelectedVoice(voiceURI) {
+  try { localStorage.setItem(VOICE_STORAGE_KEY, voiceURI) } catch { /* storage blocked */ }
+  const voices = window.speechSynthesis?.getVoices() || []
+  cachedVoice = voices.find((v) => v.voiceURI === voiceURI) || cachedVoice
+}
+
+/** Read the stored voice URI (may be null if never set) */
+export function getSelectedVoiceURI() {
+  try { return localStorage.getItem(VOICE_STORAGE_KEY) } catch { return null }
+}
+
+/**
+ * Fire cb once voices are available (handles Chrome's async voiceschanged).
+ * If voices are already loaded the callback fires synchronously.
+ */
+export function onVoicesReady(cb) {
+  if (!window.speechSynthesis) return
+  const voices = window.speechSynthesis.getVoices()
+  if (voices.length) { cb(voices); return }
+  window.speechSynthesis.addEventListener('voiceschanged', () => cb(window.speechSynthesis.getVoices()), { once: true })
+}
+
 function selectBestVoice() {
   const voices = window.speechSynthesis?.getVoices() || []
   if (!voices.length) return
+
+  // 1. Honour the user's explicit choice stored in localStorage.
+  const storedURI = getSelectedVoiceURI()
+  if (storedURI) {
+    const stored = voices.find((v) => v.voiceURI === storedURI)
+    if (stored) { cachedVoice = stored; return }
+  }
+
   cachedVoice =
     // Chrome: online neural UK voices (best quality, authentic accent)
     voices.find((v) => v.name === 'Google UK English Male') ||
@@ -210,6 +387,117 @@ function pickVoice() {
   return cachedVoice
 }
 
+// ── Lightweight SSML parser ──────────────────────────────────────────────────
+// SpeechSynthesisUtterance doesn't parse SSML natively in browsers, so we do a
+// minimal parse: split on <break> tags into separate chained utterances, map
+// <prosody> / <emphasis> attributes onto rate/pitch adjustments, and strip all
+// remaining tags before passing plain text to the utterance.
+//
+// Returns Array<{text, rate, pitch, volume, delayBefore}>.
+// Each element becomes one queued utterance; delayBefore adds a silent gap.
+
+function parseSSML(raw) {
+  if (!raw || !raw.trim().startsWith('<speak>')) {
+    // Plain text — return a single segment with no adjustments.
+    return [{ text: raw || '', rate: 1, pitch: 1, volume: 1, delayBefore: 0 }]
+  }
+
+  // Strip outer <speak>…</speak>
+  let src = raw.replace(/^\s*<speak>\s*/i, '').replace(/\s*<\/speak>\s*$/i, '')
+
+  // Split on <break … /> into segments; each segment gets its own utterance
+  // with a preceding delay equal to the break time.
+  const breakRe = /<break(?:\s+time="(\d+(?:\.\d+)?)(ms|s)")?[^>]*\/>/gi
+  const rawSegments = []
+  let last = 0
+  let m
+  breakRe.lastIndex = 0
+  while ((m = breakRe.exec(src)) !== null) {
+    rawSegments.push({ markup: src.slice(last, m.index), delayBefore: 0 })
+    const val = m[1] ? parseFloat(m[1]) : 200
+    const unit = m[2] || 'ms'
+    const ms = unit === 's' ? val * 1000 : val
+    last = m.index + m[0].length
+    rawSegments.push({ markup: '', delayBefore: ms })   // silent gap segment
+  }
+  rawSegments.push({ markup: src.slice(last), delayBefore: 0 })
+
+  // Merge the zero-text gap delay into the next real segment so we don't enqueue
+  // empty utterances — just carry the delay forward.
+  const merged = []
+  let pendingDelay = 0
+  for (const seg of rawSegments) {
+    if (seg.markup.trim() === '') {
+      pendingDelay += seg.delayBefore
+    } else {
+      merged.push({ markup: seg.markup, delayBefore: pendingDelay + seg.delayBefore })
+      pendingDelay = 0
+    }
+  }
+  if (!merged.length) return [{ text: '', rate: 1, pitch: 1, volume: 1, delayBefore: 0 }]
+
+  // For each segment, parse prosody/emphasis and strip tags.
+  return merged.map(({ markup, delayBefore }) => {
+    let rate = 1, pitch = 1, volume = 1
+
+    // <prosody rate="fast|slow|0.9|…"> → rate multiplier
+    const prosodyRateMatch = markup.match(/rate="([^"]+)"/i)
+    if (prosodyRateMatch) {
+      const rv = prosodyRateMatch[1]
+      if (rv === 'fast' || rv === 'x-fast') rate *= 1.25
+      else if (rv === 'slow' || rv === 'x-slow') rate *= 0.75
+      else if (rv === 'medium') rate *= 1.0
+      else { const n = parseFloat(rv); if (!isNaN(n)) rate *= n }
+    }
+
+    // <prosody pitch="+2st"|"-1st"|"high"|"low"> → pitch adjust
+    const prosodyPitchMatch = markup.match(/pitch="([^"]+)"/i)
+    if (prosodyPitchMatch) {
+      const pv = prosodyPitchMatch[1]
+      if (pv === 'high' || pv === 'x-high') pitch += 0.15
+      else if (pv === 'low' || pv === 'x-low') pitch -= 0.15
+      else {
+        // "+2st" / "-1st" semitone notation → approx 6% per semitone
+        const stMatch = pv.match(/^([+-]?\d+(?:\.\d+)?)st$/)
+        if (stMatch) pitch += parseFloat(stMatch[1]) * 0.06
+        else { const n = parseFloat(pv); if (!isNaN(n)) pitch += n }
+      }
+    }
+
+    // <prosody volume="loud|soft|…"> → volume
+    const prosodyVolMatch = markup.match(/volume="([^"]+)"/i)
+    if (prosodyVolMatch) {
+      const vv = prosodyVolMatch[1]
+      if (vv === 'loud' || vv === 'x-loud') volume = 1.0
+      else if (vv === 'soft' || vv === 'x-soft') volume = 0.6
+      else { const n = parseFloat(vv); if (!isNaN(n)) volume = Math.min(1, Math.max(0, n)) }
+    }
+
+    // <emphasis level="strong|moderate|reduced"> → rate/pitch nudge
+    const emphMatch = markup.match(/emphasis[^>]+level="([^"]+)"/i)
+    if (emphMatch) {
+      const lv = emphMatch[1]
+      if (lv === 'strong') { rate *= 0.88; pitch += 0.08 }
+      else if (lv === 'moderate') { rate *= 0.94; pitch += 0.04 }
+      else if (lv === 'reduced') { rate *= 1.05; pitch -= 0.04 }
+    }
+
+    // Strip all remaining XML tags and decode common entities
+    const text = markup
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    // Clamp to sensible utterance ranges
+    return { text, rate: Math.max(0.5, Math.min(2, rate)), pitch: Math.max(0.5, Math.min(2, pitch)), volume, delayBefore }
+  }).filter((s) => s.text.length > 0)
+}
+
 // ── Managed speech queue ─────────────────────────────────────────────────────
 // SpeechSynthesis.speak() only enqueues — no overlap guard, no staleness. Over a
 // match the MC lines pile up, talk over each other and drift behind the action.
@@ -225,6 +513,35 @@ function _clearSpeech() {
   try { window.speechSynthesis?.cancel() } catch { /* no-op */ }
 }
 
+function _speakSegment(item) {
+  if (!window.speechSynthesis) return
+  const doSpeak = () => {
+    const u = new SpeechSynthesisUtterance(item.text)
+    const v = pickVoice()
+    if (v) u.voice = v
+    u.rate = item.rate
+    u.pitch = item.pitch
+    u.volume = item.volume ?? 1
+    // Watchdog: some browsers drop `onend`, which would wedge the queue forever.
+    const estMs = Math.min(12000, 700 + item.text.length * 75)
+    let wd = null
+    const done = () => {
+      if (wd) { clearTimeout(wd); wd = null }
+      if (_speaking) { _speaking = false; _drainSpeech() }
+    }
+    _speaking = true
+    u.onend = done
+    u.onerror = done
+    wd = setTimeout(done, estMs + 1500)
+    window.speechSynthesis.speak(u)
+  }
+  if (item.delayBefore > 0) {
+    setTimeout(doSpeak, item.delayBefore)
+  } else {
+    doSpeak()
+  }
+}
+
 function _drainSpeech() {
   if (_speaking || !window.speechSynthesis) return
   const now = Date.now()
@@ -234,25 +551,7 @@ function _drainSpeech() {
   }
   const item = _speechQ.shift()
   if (!item) return
-  const u = new SpeechSynthesisUtterance(item.text)
-  const v = pickVoice()
-  if (v) u.voice = v
-  u.rate = item.rate
-  u.pitch = item.pitch
-  u.volume = 1
-  // Watchdog: some browsers drop `onend`, which would wedge the queue forever.
-  // Estimate the utterance length and force-advance if `onend` never fires.
-  const estMs = Math.min(12000, 700 + item.text.length * 75)
-  let wd = null
-  const done = () => {
-    if (wd) { clearTimeout(wd); wd = null }
-    if (_speaking) { _speaking = false; _drainSpeech() }
-  }
-  _speaking = true
-  u.onend = done
-  u.onerror = done
-  wd = setTimeout(done, estMs + 1500)
-  window.speechSynthesis.speak(u)
+  _speakSegment(item)
 }
 
 export const sound = {
@@ -479,9 +778,27 @@ export const sound = {
   // and stale commentary is dropped to stay in sync. `priority: true` marks a
   // must-play line (walk-on intro, rules, game-shot) that is never dropped;
   // `ttl` is how long a droppable line may wait before it's skipped.
+  //
+  // `text` may be a plain string OR an SSML string wrapped in <speak>…</speak>.
+  // SSML <break> tags split the utterance into multiple chained queue items so
+  // that pauses play correctly without blocking the queue between them.
   say(text, { rate = 0.98, pitch = 0.92, ttl = 3000, priority = false } = {}) {
     if (!enabled || !window.speechSynthesis || !text) return
-    _speechQ.push({ text, rate, pitch, t: Date.now(), ttl, drop: !priority })
+    const segments = parseSSML(text)
+    const now = Date.now()
+    for (const seg of segments) {
+      _speechQ.push({
+        text: seg.text,
+        // SSML prosody values are multiplied on top of the caller's base rate/pitch
+        rate: rate * seg.rate,
+        pitch: pitch * seg.pitch,
+        volume: seg.volume,
+        delayBefore: seg.delayBefore,
+        t: now,
+        ttl,
+        drop: !priority,
+      })
+    }
     _drainSpeech()
   },
 

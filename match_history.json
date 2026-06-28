@@ -262,5 +262,195 @@
         "darts": 6
       }
     ]
+  },
+  {
+    "ts": "2026-06-26 19:12",
+    "mode": "Cricket",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "James",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 8.9,
+        "darts": 105
+      },
+      {
+        "name": "Al",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.4,
+        "darts": 102
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-26 22:25",
+    "mode": "Shanghai",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "AI",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 2.5,
+        "darts": 23
+      },
+      {
+        "name": "AI",
+        "sets": 0,
+        "legs": 0,
+        "avg": 3.5,
+        "darts": 24
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-26 22:46",
+    "mode": "Killer",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "Becky",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 21
+      },
+      {
+        "name": "Frankie",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 15
+      },
+      {
+        "name": "Scarlett",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 18
+      },
+      {
+        "name": "Becky",
+        "sets": 0,
+        "legs": 0,
+        "avg": 0.0,
+        "darts": 21
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-27 08:51",
+    "mode": "Count Up",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "Alice",
+    "players": [
+      {
+        "name": "Alice",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3
+      },
+      {
+        "name": "Bob",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-27 15:14",
+    "mode": "Count Up",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "B",
+    "players": [
+      {
+        "name": "B",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3
+      },
+      {
+        "name": "A",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-27 16:13",
+    "mode": "Count Up",
+    "start_score": 0,
+    "double_in": false,
+    "double_out": false,
+    "winner": "James",
+    "players": [
+      {
+        "name": "James",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      },
+      {
+        "name": "Rival",
+        "sets": 0,
+        "legs": 0,
+        "avg": 180.0,
+        "darts": 3,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      }
+    ]
+  },
+  {
+    "ts": "2026-06-28 12:05",
+    "mode": "X01",
+    "start_score": 301,
+    "double_in": false,
+    "double_out": true,
+    "winner": "James",
+    "players": [
+      {
+        "name": "James",
+        "sets": 1,
+        "legs": 0,
+        "avg": 33.4,
+        "darts": 27,
+        "maxima": 0,
+        "checkout_pct": 11.1
+      },
+      {
+        "name": "Scarlett",
+        "sets": 0,
+        "legs": 0,
+        "avg": 31.7,
+        "darts": 27,
+        "maxima": 0,
+        "checkout_pct": 0.0
+      }
+    ]
   }
 ]
