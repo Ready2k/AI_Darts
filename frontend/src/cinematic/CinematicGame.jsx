@@ -159,6 +159,52 @@ function winStats(game, p) {
   }
 }
 
+const DARTBOARD_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
+
+function getAdjacentNumbers(num) {
+  if (num === 25) return []
+  const idx = DARTBOARD_ORDER.indexOf(num)
+  if (idx === -1) return []
+  const prev = DARTBOARD_ORDER[(idx - 1 + 20) % 20]
+  const next = DARTBOARD_ORDER[(idx + 1) % 20]
+  return [prev, next]
+}
+
+function analyzeCheckoutAttempt(disp, startScore) {
+  let score = startScore
+  let doubleShots = 0
+  let closeDoubleShots = 0
+
+  for (const d of disp) {
+    const isDoubleScore = (score <= 40 && score % 2 === 0) || score === 50
+    if (isDoubleScore) {
+      doubleShots++
+      const targetNum = score === 50 ? 25 : score / 2
+      const hitLabel = d.label || ''
+      const match = hitLabel.match(/^([SDB])(\d+)$/)
+      if (match) {
+        const type = match[1]
+        const num = parseInt(match[2], 10)
+        if (num === targetNum) {
+          closeDoubleShots++
+        } else {
+          const adjacent = getAdjacentNumbers(targetNum)
+          if (type === 'D' && adjacent.includes(num)) {
+            closeDoubleShots++
+          }
+        }
+      }
+    }
+    const points = d.points || 0
+    if (score - points >= 2 || score - points === 0) {
+      score -= points
+    }
+  }
+
+  return { attempted: doubleShots > 0, close: closeDoubleShots > 0 }
+}
+
+
 // Map a live game player + chosen avatar into the broadcast `pl` shape.
 function toCinPlayer(p, idx, avatarMap) {
   const av = getAvatar(avatarMap[p.name])
@@ -516,7 +562,17 @@ export default function CinematicGame({ game, avatarMap = {}, animState, boardDa
     // Checkout miss: the player was on a finish before this visit completed but
     // the visit ended without winning. Fire the disappointed caller.
     if (wasOnCheckout && !game.over) {
-      sound.say(pickLine('checkoutMiss'), { rate: 0.97, pitch: 0.82 })
+      const isBust = game.message && game.message.includes('BUST')
+      const startScore = (currentPlayer?.score ?? 0) + (isBust ? 0 : total)
+      const { attempted, close } = analyzeCheckoutAttempt(disp, startScore)
+      
+      if (attempted) {
+        if (close) {
+          sound.say(pickLine('checkoutMissClose'), { rate: 0.97, pitch: 0.82 })
+        } else {
+          sound.say(pickLine('checkoutMiss'), { rate: 0.97, pitch: 0.82 })
+        }
+      }
     }
 
     const total = disp.reduce((s, d) => s + (d.points || 0), 0)

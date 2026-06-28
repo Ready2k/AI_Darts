@@ -33,13 +33,18 @@ const LINES = {
     '<speak>Oh, <prosody pitch="+1st">that\'s class!</prosody> <emphasis level="strong">{total}!</emphasis></speak>',
     '<speak><prosody rate="fast">Big score</prosody> — <prosody pitch="+2st">{total}!</prosody></speak>',
   ],
-  // A finish attempt missed.
-  checkoutMiss: [
+  // A close finish attempt missed (hit the single of the target double, or adjacent double)
+  checkoutMissClose: [
     '<speak><prosody pitch="-1st" rate="slow">Just missed it!</prosody></speak>',
     '<speak><emphasis level="moderate">Agonising</emphasis> — so close!</speak>',
-    '<speak>Rattled the wire!</speak>',
+    'Rattled the wire!',
+  ],
+  // A general finish attempt missed (no close darts at double, or couldn't set up the double)
+  checkoutMiss: [
     '<speak><prosody rate="0.9" pitch="-1st">Not this time.</prosody></speak>',
     '<speak>Oh, <prosody pitch="-1st">he\'ll be sick with that.</prosody></speak>',
+    '<speak>Opportunity missed.</speak>',
+    '<speak>Left the door open there.</speak>',
   ],
   // The lead changed hands.
   leadChange: [

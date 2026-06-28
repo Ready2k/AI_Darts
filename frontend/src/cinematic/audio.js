@@ -684,12 +684,14 @@ async function _speakKokoro(item) {
 // from commentary.js / App.jsx / CinematicGame.jsx so the cache keys match what's
 // actually spoken. Synthesised once on Kokoro init so they play instantly later.
 const PRIME_PHRASES = [
-  // checkoutMiss (commentary.js)
+  // checkoutMiss / checkoutMissClose (commentary.js)
   '<speak><prosody pitch="-1st" rate="slow">Just missed it!</prosody></speak>',
   '<speak><emphasis level="moderate">Agonising</emphasis> — so close!</speak>',
-  '<speak>Rattled the wire!</speak>',
+  'Rattled the wire!',
   '<speak><prosody rate="0.9" pitch="-1st">Not this time.</prosody></speak>',
   '<speak>Oh, <prosody pitch="-1st">he\'ll be sick with that.</prosody></speak>',
+  '<speak>Opportunity missed.</speak>',
+  '<speak>Left the door open there.</speak>',
   // killerArm — the only no-placeholder variant
   '<speak><prosody rate="fast" pitch="+2st">Locked and loaded!</prosody></speak>',
   // Game on! (CinematicGame.jsx)
