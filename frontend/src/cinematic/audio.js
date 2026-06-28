@@ -349,7 +349,7 @@ export const crowd = {
 
   singChant(type = 'chase-the-sun') {
     console.log(`Crowd: singing chant ${type}`)
-    if (!enabled || !crowdState.running) return
+    if (!enabled) return
     const c = ac(); if (!c) return
     const t = c.currentTime
 
@@ -392,32 +392,34 @@ export const crowd = {
       const numVoices = 8
       const noteGain = c.createGain()
       
+      // Increased gain from 0.035 to 0.09 for much better audibility
       noteGain.gain.setValueAtTime(0, t + n.time)
-      noteGain.gain.linearRampToValueAtTime(0.035, t + n.time + 0.06)
-      noteGain.gain.setValueAtTime(0.035, t + n.time + n.dur - 0.06)
+      noteGain.gain.linearRampToValueAtTime(0.09, t + n.time + 0.06)
+      noteGain.gain.setValueAtTime(0.09, t + n.time + n.dur - 0.06)
       noteGain.gain.linearRampToValueAtTime(0.0001, t + n.time + n.dur)
 
+      // Warm lowpass filter to simulate crowd room acoustics
       const lp = c.createBiquadFilter()
       lp.type = 'lowpass'
-      lp.frequency.setValueAtTime(950, t + n.time)
+      lp.frequency.setValueAtTime(1100, t + n.time)
 
-      const bp = c.createBiquadFilter()
-      bp.type = 'bandpass'
-      bp.frequency.setValueAtTime(700, t + n.time)
-      bp.Q.setValueAtTime(2.5, t + n.time)
+      // Highpass filter to remove low-end muddiness
+      const hp = c.createBiquadFilter()
+      hp.type = 'highpass'
+      hp.frequency.setValueAtTime(150, t + n.time)
 
       const oscillators = []
       for (let v = 0; v < numVoices; v++) {
         const osc = c.createOscillator()
         osc.type = 'sawtooth'
-        const detune = (Math.random() - 0.5) * 45
+        const detune = (Math.random() - 0.5) * 55 // slightly wider detune
         osc.frequency.setValueAtTime(n.freq, t + n.time)
         osc.detune.setValueAtTime(detune, t + n.time)
         osc.connect(lp)
         oscillators.push(osc)
       }
 
-      lp.connect(bp).connect(noteGain).connect(c.destination)
+      lp.connect(hp).connect(noteGain).connect(c.destination)
       
       oscillators.forEach(osc => {
         osc.start(t + n.time)
