@@ -207,6 +207,7 @@ def get_config_endpoint():
         "board_awaiting_takeout": bool(ad.get("awaiting_takeout")),
         "board_ts": ad.get("ts", 0),
         "awaiting_clear": detect.STATUS.get("awaiting_clear", False),
+        "cameras_present": detect.are_cameras_present() if DETECTION_SOURCE != "autodarts" else True,
     }
 
 

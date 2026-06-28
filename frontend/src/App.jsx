@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Settings, LineChart, Target, Camera, Crosshair,
   Play, Square, RefreshCw, Layers, Trophy, Undo2, Plus, X, Check, Bug, Star,
-  Maximize2, Minimize2, Menu, ChevronLeft, Power, Swords
+  Maximize2, Minimize2, Menu, ChevronLeft, Power, Swords, AlertTriangle
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell
@@ -162,7 +162,7 @@ function Scoreboard({ game, avatarMap }) {
 }
 
 // ── Game setup form ─────────────────────────────────────────────────────────
-function GameSetup({ onStarted }) {
+function GameSetup({ onStarted, config }) {
   const [players, setPlayers] = useState([{ name: 'Player 1', avatar: 'pubguy', is_ai: false, ai_level: 'Beginner' }])
   const [gameMode, setGameMode] = useState('501')
   const [startScore, setStartScore] = useState(501)
@@ -407,6 +407,17 @@ function GameSetup({ onStarted }) {
           <span className={`block w-5 h-5 rounded-full bg-white transition-transform ${debug ? 'translate-x-4' : ''}`} />
         </span>
       </button>
+
+      {config?.source !== 'autodarts' && config?.cameras_present === false && (
+        <div className="text-xs text-amber-300/85 bg-amber-500/10 p-4 rounded-xl border border-amber-500/20 flex flex-col gap-2">
+          <div className="flex items-center gap-2 font-semibold text-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" /> No cameras detected.
+          </div>
+          <p className="text-white/60 leading-relaxed">
+            You can still start the match and play. The system will run in <strong>Demo Mode</strong> where you can manually enter scores by clicking on the dartboard or using the keyboard.
+          </p>
+        </div>
+      )}
 
       <button onClick={start} disabled={busy}
         className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500/30 to-fuchsia-500/30 hover:from-cyan-500/40 hover:to-fuchsia-500/40 border border-cyan-400/30 font-semibold tracking-wide disabled:opacity-50">
@@ -1477,6 +1488,24 @@ function App() {
           )}
         </header>
 
+        {config.source !== 'autodarts' && config.cameras_present === false && (
+          <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-4 text-sm text-amber-200">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />
+              <div>
+                <span className="font-semibold text-white">No cameras detected.</span> The system will run in{' '}
+                <span className="font-semibold text-cyan-300">Demo Mode</span> (manual scoring via the board or keyboard simulation).
+              </div>
+            </div>
+            {activeTab !== 'Settings' && (
+              <button onClick={() => setActiveTab('Settings')}
+                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-100 text-xs font-bold uppercase tracking-wider transition-colors shrink-0">
+                Configure
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex-1 glass-panel rounded-2xl shadow-2xl border border-white/5 p-8 overflow-auto">
           {activeTab === 'Dashboard' && (
             <div className="h-full flex flex-col items-center justify-center gap-8">
@@ -1657,7 +1686,7 @@ function App() {
               </div>
               <DetectionConfig config={config} onSave={saveConfig} />
               <VoicePicker />
-              <GameSetup onStarted={(pMap, opts) => { setAvatarMap(pMap); setAutoStartDetect(true); if (opts?.forceCinematic) setCinematic(true); refresh(); setActiveTab('Live Track') }} />
+              <GameSetup config={config} onStarted={(pMap, opts) => { setAvatarMap(pMap); setAutoStartDetect(true); if (opts?.forceCinematic) setCinematic(true); refresh(); setActiveTab('Live Track') }} />
             </div>
           )}
         </div>

@@ -114,6 +114,33 @@ def new_game(**overrides):
 # loop can notice the game was replaced and flush its per-turn local state.
 STATUS = {"phase": "idle", "awaiting_clear": False, "game_gen": 0, "paused": False}
 
+_cameras_present_cache = None
+_last_camera_check_time = 0.0
+
+def are_cameras_present():
+    global _cameras_present_cache, _last_camera_check_time
+    import time
+    now = time.time()
+    if _cameras_present_cache is not None and (now - _last_camera_check_time < 5.0):
+        return _cameras_present_cache
+    
+    present = False
+    for i in CAMERAS:
+        try:
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    present = True
+                    break
+        except Exception:
+            pass
+    _cameras_present_cache = present
+    _last_camera_check_time = now
+    return present
+
+
 
 def game_state():
     """Serialisable snapshot for the web UI (safe to call from another thread)."""
@@ -461,6 +488,13 @@ def capture_background(readers, n_frames=20, warmup_frames=30, homographies=None
     board_info  = {}
     homographies = homographies or {}
     for reader in readers:
+        # If the camera couldn't even be opened, skip it immediately instead of
+        # waiting for the timeout.
+        if not reader.cap.isOpened():
+            label = LABELS.get(reader.index, f"Camera {reader.index}")
+            print(f"  {label}: device not open — skipping background capture")
+            continue
+
         # Drain warmup_frames to let auto-exposure/AWB settle before accumulating.
         # Bounded by per_cam_timeout so a camera that never delivers frames (e.g.
         # unplugged, or wedged) can't hang startup forever.
